@@ -9,14 +9,7 @@ import SuccessModal from "@/components/generator/SuccessModal";
 import FallbackToast from "@/components/generator/FallbackToast";
 import { prepareImage } from "@/lib/client/image";
 import { detectVector, prepareSvg, preparePostScript } from "@/lib/client/vector";
-import {
-  addToHistory,
-  clearHistory,
-  formatTime,
-  getHistoryServerSnapshot,
-  getHistorySnapshot,
-  subscribeHistory,
-} from "@/lib/client/history";
+import { addToHistory } from "@/lib/client/history";
 import {
   getUserSettings,
   getServerUserSettings,
@@ -101,16 +94,12 @@ export default function GeneratorWorkbench({
     getSelectedProvider,
     () => ""
   );
-  const history = useSyncExternalStore(
-    subscribeHistory,
-    getHistorySnapshot,
-    getHistoryServerSnapshot
-  );
+
 
   const [items, setItems] = useState<WorkItem[]>([]);
   const [running, setRunning] = useState(false);
   const [showApiKeys, setShowApiKeys] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
+
   const [showSuccess, setShowSuccess] = useState(false);
   const [fallbackMsg, setFallbackMsg] = useState<string | null>(null);
   const [stats, setStats] = useState<Stats>({ done: 0, total: 0, success: 0, failed: 0 });
@@ -652,40 +641,6 @@ export default function GeneratorWorkbench({
               )}
             </div>
           ) : null}
-
-          {/* History */}
-          {history.length > 0 && (
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-surface dark:bg-surface shadow-sm">
-              <button
-                onClick={() => setShowHistory((v) => !v)}
-                className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-semibold"
-              >
-                Recent generations (stored locally in your browser)
-                <span>{showHistory ? "▲" : "▼"}</span>
-              </button>
-              {showHistory && (
-                <div className="border-t border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 max-h-80 overflow-y-auto">
-                  {history.map((h) => (
-                    <div key={`${h.savedAt}-${h.filename}`} className="px-4 py-3 text-sm">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="font-medium truncate">{h.filename}</span>
-                        <span className="text-xs text-slate-400 shrink-0">{formatTime(h.savedAt)}</span>
-                      </div>
-                      <p className="mt-1 text-slate-600 dark:text-slate-400 line-clamp-1">{h.title}</p>
-                    </div>
-                  ))}
-                  <div className="px-4 py-2">
-                    <button
-                      onClick={() => clearHistory()}
-                      className="text-xs text-red-600 dark:text-red-400 hover:underline"
-                    >
-                      Clear history
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
         </section>
       </div>
 
