@@ -2,6 +2,21 @@
   "$schema": "Maintained by Plickify. Newest entries first. Fork users see this file's contents on the /updates page and via the nav bell.",
   "updates": [
     {
+      "version": "2.2.0",
+      "date": "2026-08-24",
+      "type": "bugfix",
+      "title": "AI/EPS loading chain rebuilt + half/half result cards",
+      "changes": [
+        "AI loading now matches CSV Tree's proven chain: render as-is first, then retry a sliced %PDF- payload - no more premature 'no PDF-compatible data' failures",
+        "EPS files fall back to their embedded TIFF preview (decoded in-browser) before giving up",
+        "Result cards redesigned: large image preview on the left half, editable metadata on the right half"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
       "version": "2.1.0",
       "date": "2026-08-24",
       "type": "bugfix",
