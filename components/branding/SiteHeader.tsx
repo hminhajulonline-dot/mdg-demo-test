@@ -5,9 +5,11 @@ import UserProfile from "@/components/branding/UserProfile";
 import HealthBadge from "@/components/branding/HealthBadge";
 import DeveloperMenu from "@/components/branding/DeveloperMenu";
 import UpdateBell from "@/components/branding/UpdateBell";
+import AnnouncementBanner from "@/components/branding/AnnouncementBanner";
 import { getAdminStatus } from "@/lib/auth";
 import { DEVELOPER } from "@/lib/core/license";
 import { LATEST_UPDATE } from "@/lib/updates";
+import { ANNOUNCEMENT } from "@/lib/announcement";
 
 export default async function SiteHeader() {
   const [s, { isAdmin }] = await Promise.all([getSiteSettings(), getAdminStatus()]);
@@ -34,6 +36,12 @@ export default async function SiteHeader() {
         </Link>
 
         <nav className="flex items-center gap-1 sm:gap-3 text-sm">
+          <Link
+            href="/community"
+            className="hidden sm:inline-flex rounded-lg px-3 py-2 font-medium hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          >
+            Community
+          </Link>
           <ThemeToggle />
           <HealthBadge />
           {LATEST_UPDATE ? (
@@ -52,6 +60,7 @@ export default async function SiteHeader() {
           <UserProfile isAdmin={isAdmin} />
         </nav>
       </div>
+      {ANNOUNCEMENT ? <AnnouncementBanner announcement={ANNOUNCEMENT} /> : null}
     </header>
   );
 }

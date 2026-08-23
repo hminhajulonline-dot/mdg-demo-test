@@ -1,0 +1,10 @@
+{
+  "$schema": "Developer-controlled marketing banner. Edit THIS file only in the official repo - auto-sync delivers it to every fork. Change 'id' to re-show the banner to everyone. Set enabled=false to hide.",
+  "enabled": true,
+  "id": "2026-08-24-launch",
+  "theme": "promo",
+  "title": "Plickify Academy is live!",
+  "body": "Learn microstock from scratch - courses, tools and a growing community of contributors. Join free today.",
+  "linkUrl": "https://www.plickifyacademy.com/",
+  "linkLabel": "Visit Plickify Academy"
+}

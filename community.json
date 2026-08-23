@@ -1,0 +1,19 @@
+{
+  "$schema": "Community feed - maintained ONLY in the official repo. Edit this file, commit, and every forked site shows the same posts after auto-sync. Newest first. 'body' supports blank-line-separated paragraphs.",
+  "posts": [
+    {
+      "id": "welcome-2026",
+      "date": "2026-08-24",
+      "pinned": true,
+      "title": "Welcome to the Plickify community feed",
+      "body": "This is where we share marketplace news, platform rule changes, selling tips and product announcements.\n\nCheck back regularly - or watch the bell icon in the header for tool releases."
+    },
+    {
+      "id": "tip-metadata-seo",
+      "date": "2026-08-24",
+      "pinned": false,
+      "title": "Tip: front-load your strongest keywords",
+      "body": "Marketplace search engines weight the beginning of your title more heavily. Put the subject first and decorative words last.\n\nExample: \"Coffee beans pouring into grinder\" beats \"Beautiful amazing shot of coffee\"."
+    }
+  ]
+}

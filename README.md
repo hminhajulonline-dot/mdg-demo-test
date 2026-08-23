@@ -391,6 +391,34 @@ npm install                      # if package.json changed
 Then run any **new** migrations from `supabase/migrations/` in the SQL
 Editor (files numbered higher than what you already ran).
 
+## Community Feed
+
+The `/community` page is a social space for marketplace news, platform
+rule changes and tips - maintained **exclusively in the official
+repository**:
+
+1. Edit `community.json` at the repo root:
+   ```json
+   {
+     "posts": [
+       {
+         "id": "adobe-rules-2026-09",
+         "date": "2026-09-01",
+         "pinned": true,
+         "title": "Adobe Stock updates keyword rules",
+         "body": "First paragraph...\n\nSecond paragraph...",
+         "linkUrl": "https://helpx.adobe.com/...",
+         "linkLabel": "Official announcement"
+       }
+     ]
+   }
+   ```
+2. Commit to `main` on the official repo.
+3. Auto-sync delivers it to every fork within the hour; Vercel redeploys.
+
+Like `announcement.json`, this cannot be edited from any Admin Panel -
+fork owners receive the same feed as everyone else.
+
 ## Troubleshooting
 
 **Login loops back to `/login?next=...`**
