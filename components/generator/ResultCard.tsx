@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { getCardFields } from "@/lib/csv/formats";
-import type { GenerationMode, GenerationResult, GeneratedMetadata } from "@/lib/types";
+import type { GenerationMode } from "@/lib/types";
 
 export async function copyText(text: string): Promise<boolean> {
   try {

@@ -2,6 +2,20 @@
   "$schema": "Maintained by Plickify. Newest entries first. Fork users see this file's contents on the /updates page and via the nav bell.",
   "updates": [
     {
+      "version": "2.2.1",
+      "date": "2026-08-24",
+      "type": "bugfix",
+      "title": "Critical fix: AI/EPS files were parsing the page HTML",
+      "changes": [
+        "Vector files now read from their original file blob - previously an empty preview URL made the browser fetch the generator page itself and try to parse its HTML as a PDF (source of all the getHexString warnings)"
+      ],
+      "bugfixes": [
+        "Object URLs are revoked correctly when removing items"
+      ],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },    {
       "version": "2.2.0",
       "date": "2026-08-24",
       "type": "bugfix",

@@ -20,53 +20,76 @@ export interface PreparedImage {
 }
 
 let pdfjsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
+type WorkerMode = "local" | "cdn";
 
-async function loadPdfjs() {
+async function loadPdfjs(mode: WorkerMode) {
   if (!pdfjsPromise) {
     pdfjsPromise = import("pdfjs-dist").then((pdfjs) => {
-      pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      // Local bundled worker first; CDN as a resilient fallback because
+      // bundlers can break pdf.js's fake-worker dynamic imports.
+      pdfjs.GlobalWorkerOptions.workerSrc =
+        mode === "cdn"
+          ? `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
+          : "/pdf.worker.min.mjs";
       return pdfjs;
     });
+  } else {
+    const pdfjs = await pdfjsPromise;
+    pdfjs.GlobalWorkerOptions.workerSrc =
+      mode === "cdn"
+        ? `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`
+        : "/pdf.worker.min.mjs";
   }
   return pdfjsPromise;
 }
 
 /** Try rendering page one of a PDF payload; null on any failure. */
-async function tryRenderPdf(data: Uint8Array): Promise<PreparedImage | null> {
-  try {
-    const pdfjs = await loadPdfjs();
-    const loadingTask = pdfjs.getDocument({ data });
-    const doc = await loadingTask.promise;
+async function tryRenderPdf(
+  data: Uint8Array,
+  firstErrorMessage?: { value: string }
+): Promise<PreparedImage | null> {
+  // Two worker strategies: local file, then CDN (CSV Tree approach).
+  for (const mode of ["local", "cdn"] as WorkerMode[]) {
     try {
-      const page = await doc.getPage(1);
-      const base = page.getViewport({ scale: 1 });
-      const scale = Math.min(3, MAX_EDGE / Math.max(base.width, base.height));
-      const viewport = page.getViewport({ scale });
+      const pdfjs = await loadPdfjs(mode);
+      const loadingTask = pdfjs.getDocument({ data });
+      const doc = await loadingTask.promise;
+      try {
+        const page = await doc.getPage(1);
+        const base = page.getViewport({ scale: 1 });
+        const scale = Math.min(3, MAX_EDGE / Math.max(base.width, base.height));
+        const viewport = page.getViewport({ scale });
 
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(viewport.width);
-      canvas.height = Math.round(viewport.height);
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return null;
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) continue;
 
-      // White backdrop - vector pages are transparent and metadata should
-      // describe artwork, not a black void.
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // White backdrop - vector pages are transparent and metadata should
+        // describe artwork, not a black void.
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+        await page.render({ canvasContext: ctx, viewport, canvas }).promise;
 
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, "image/jpeg", QUALITY)
-      );
-      if (!blob) return null;
-      return { base64: await blobToBase64(blob), mimeType: "image/jpeg" };
-    } finally {
-      void loadingTask.destroy();
+        const blob = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob(resolve, "image/jpeg", QUALITY)
+        );
+        if (!blob) continue;
+        return { base64: await blobToBase64(blob), mimeType: "image/jpeg" };
+      } finally {
+        void loadingTask.destroy();
+      }
+    } catch (err) {
+      // Remember why the first strategy failed so the final error is
+      // actionable instead of a generic "no PDF-compatible data".
+      if (firstErrorMessage && !firstErrorMessage.value && err instanceof Error) {
+        firstErrorMessage.value = err.message;
+      }
     }
-  } catch {
-    return null;
   }
+  return null;
 }
 
 /** Slice a buffer to its embedded "%PDF-" payload, or null when absent. */
@@ -179,9 +202,10 @@ export async function preparePostScript(
   ext: "ai" | "eps" | "pdf"
 ): Promise<PreparedImage> {
   const bytes = new Uint8Array(await file.arrayBuffer());
+  const firstError = { value: "" };
 
   // 1. Render as-is (most AI >= CS files are PDF-compatible).
-  const direct = await tryRenderPdf(bytes);
+  const direct = await tryRenderPdf(bytes, firstError);
   if (direct) return direct;
 
   // 2. Retry against a sliced %PDF- payload (PostScript-prefixed exports).
@@ -197,10 +221,14 @@ export async function preparePostScript(
     if (tiff) return tiff;
   }
 
+  const technical = firstError.value
+    ? ` Technical detail: ${firstError.value}`
+    : "";
   throw new Error(
-    ext === "eps"
+    (ext === "eps"
       ? `${file.name}: no renderable preview found. Re-export the EPS with an embedded preview (Illustrator: "Embed preview" / 72-150 dpi) or upload an SVG/PDF/JPG version instead.`
-      : `${file.name}: this AI file has no PDF-compatible data. In Illustrator use File > Save As and tick "Create PDF Compatible File", or export as SVG/PNG and add that instead.`
+      : `${file.name}: this AI file has no PDF-compatible data. In Illustrator use File > Save As and tick "Create PDF Compatible File", or export as SVG/PNG and add that instead.`) +
+      technical
   );
 }
 
