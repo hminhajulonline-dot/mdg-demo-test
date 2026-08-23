@@ -1,9 +1,8 @@
 "use client";
 
 /**
- * Client-side image preparation: downscales large images via canvas and
- * returns JPEG base64. Keeps API payloads small (Vercel function limit)
- * and matches what vision models need - full resolution is unnecessary.
+ * Client-side raster preparation for raster images (downscale to JPEG).
+ * Vector files (SVG/AI/EPS/PDF) go through lib/client/vector.ts instead.
  */
 
 const MAX_EDGE = 1568;

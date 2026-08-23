@@ -46,7 +46,7 @@ export default function Dropzone({
       <input
         ref={inputRef}
         type="file"
-        accept="image/jpeg,image/png,image/webp,image/gif,image/bmp"
+        accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,.svg,.ai,.eps,.pdf"
         multiple
         hidden
         onChange={(e) => {
@@ -69,10 +69,10 @@ export default function Dropzone({
         />
       </svg>
       <p className="mt-3 font-medium">
-        Drag &amp; drop images here, or click to browse
+        Drag &amp; drop images or vector files here, or click to browse
       </p>
       <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-        JPEG, PNG, WebP, GIF or BMP - up to {maxFiles} images per batch
+        JPG, PNG, WebP, GIF, BMP, SVG, AI, EPS - up to {maxFiles} files per batch
       </p>
     </div>
   );

@@ -7,6 +7,8 @@ import type { GeneratorSettings } from "@/lib/types";
 export interface PromptOptions {
   mode: "metadata" | "img2prompt";
   platform: string;
+  /** "svg" | "postscript" when the source was a vector file. */
+  vector: string | null;
   // metadata
   titleLengthMin: number;
   titleLengthMax: number;
@@ -37,6 +39,45 @@ export interface PromptOptions {
 
 export function buildPrompt(o: PromptOptions): string {
   return o.mode === "img2prompt" ? buildImg2Prompt(o) : buildMetadata(o);
+}
+
+/**
+ * Vector source awareness - the key differentiator vs CSV Tree for
+ * SVG/AI/EPS files. Vision models default to photographic vocabulary and
+ * hallucinate camera details on flat artwork; these notes anchor them.
+ */
+function vectorAwareness(o: PromptOptions): string {
+  if (o.vector === "svg") {
+    return `
+
+SOURCE CONTEXT - VECTOR GRAPHIC (SVG):
+- This artwork was rasterized from an SVG: expect flat design, icons, logos, line art, illustrations, clipart or UI graphics - NOT a photograph.
+- Do NOT invent photographic qualities (camera body, lens, bokeh, depth of field, film grain, lighting setup).
+- Describe only what is clearly visible: subjects, style (flat / outline / gradient / cartoon / geometric), color palette and composition.
+- Strong vector keywords where accurate: flat design, vector art, illustration, icon, logo, line art, minimalist, scalable, clipart, sticker.
+- If the render looks partially blank or broken, describe ONLY the elements you can actually see.`;
+  }
+  if (o.vector === "postscript") {
+    return `
+
+SOURCE CONTEXT - VECTOR GRAPHIC (AI/EPS rendered to image):
+- This artwork comes from an Adobe Illustrator / EPS file rendered to a flat image: typically print-ready illustration, logo, label, banner, icon or clipart - NOT a photograph.
+- Do NOT invent photographic qualities (camera, lens, bokeh, depth of field, film grain).
+- Describe only clearly visible elements: main subject, style, palette, composition.
+- Useful vector keywords where accurate: vector art, illustration, editable design, print ready, logo, emblem, badge, clipart.
+- If parts of the render appear blank or mis-drawn, ignore them and describe only what is clearly visible.`;
+  }
+  return "";
+}
+
+/** Anti-hallucination contract applied to both modes. */
+function accuracyRule(): string {
+  return `
+
+ACCURACY CONTRACT:
+- Describe ONLY what is clearly visible in the image. Never guess unseen details, brands, locations, seasons or emotions.
+- Every keyword must map to something visible. If you cannot reach the keyword target honestly, return fewer honest keywords instead of padding with unrelated ones.
+- No unrelated filler words (amazing, beautiful, stunning) unless visually justified.`;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -84,6 +125,8 @@ Requirements:
   }`;
 
   if (o.includeCategory) prompt += `\n- Category: choose EXACTLY one category from the provided list.`;
+  prompt += vectorAwareness(o);
+  prompt += accuracyRule();
   if (o.silhouette) prompt += "\n- If the image contains silhouettes, include silhouette-related keywords";
   if (o.transparent || o.isPng)
     prompt += "\n- If the image has a transparent/white background, mention it in the metadata";
@@ -126,6 +169,8 @@ IMPORTANT OUTPUT RULES:
 - Do NOT prepend a label, preface or explanation.`;
 
   if (o.whiteBackground) p += "\nNote: scene is on a clean white background.";
+  p += vectorAwareness(o);
+  p += accuracyRule();
   if (o.cameraParameters) p += "\nInclude camera parameters (lens, aperture, shutter speed) if appropriate.";
   if (o.negativePromptWords) p += `\nAvoid these words: ${o.negativePromptWords}.`;
   if (o.prohibitedWords) p += `\nSTRICTLY DO NOT use any of these prohibited words anywhere in the prompt: ${o.prohibitedWords}.`;
@@ -142,6 +187,7 @@ export function buildDefaultMetadataPrompt(s: GeneratorSettings, platform = "gen
   return buildMetadata({
     mode: "metadata",
     platform,
+    vector: null,
     titleLengthMin: s.title_length_min,
     titleLengthMax: s.title_length_max,
     descriptionWordsMin: s.description_words_min,

@@ -65,8 +65,12 @@ function buildOptions(body: Record<string, unknown>, s: Awaited<ReturnType<typeo
   const mode =
     u.mode === "img2prompt" || body.mode === "img2prompt" ? "img2prompt" : "metadata";
 
+  const vectorKind = typeof body.vectorKind === "string" ? body.vectorKind.trim() : "";
+  const vector = ["svg", "postscript"].includes(vectorKind) ? vectorKind : null;
+
   return {
-    mode,
+    mode: mode as PromptOptions["mode"],
+    vector,
     platform: typeof body.platform === "string" && /^[a-z0-9-]{1,30}$/.test(body.platform)
       ? body.platform
       : "general",
@@ -83,7 +87,9 @@ function buildOptions(body: Record<string, unknown>, s: Awaited<ReturnType<typeo
     singleWordKw: clampBool(u.singleWordKw),
     silhouette: clampBool(u.silhouette),
     transparent: clampBool(u.transparent),
-    isPng: body.mimeType === "image/png",
+    // PNGs are recompressed to JPEG in the browser; the client tells us the
+    // original type so transparent-background phrasing still applies.
+    isPng: body.pngSource === true || body.mimeType === "image/png",
     prefix: clampStr(u.prefix, 60),
     suffix: clampStr(u.suffix, 60),
     negativeTitleWords: clampStr(u.negativeTitleWords, 300),

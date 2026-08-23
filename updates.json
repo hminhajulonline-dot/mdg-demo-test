@@ -2,12 +2,87 @@
   "$schema": "Maintained by Plickify. Newest entries first. Fork users see this file's contents on the /updates page and via the nav bell.",
   "updates": [
     {
-      "version": "1.7.2",
+      "version": "2.0.0",
       "date": "2026-08-24",
+      "type": "feature",
+      "title": "Vector files (SVG/AI/EPS) + smarter, honest metadata",
+      "changes": [
+        "Upload SVG, AI, EPS and PDF files - rasterized locally in your browser (better than CSV Tree: no proxy needed)",
+        "Vector-aware AI prompting: flat-design vocabulary instead of invented camera/photography terms",
+        "New accuracy contract: the model must describe only visible elements and return fewer honest keywords rather than unrelated padding",
+        "Sharper vector rendering with white backdrop and up to 3x upscale",
+        "Redesigned result cards with status pills and a placeholder tile for vector files"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
+      "version": "1.9.0",
+      "date": "2026-08-24",
+      "type": "bugfix",
+      "title": "Generator option fixes + update notifications",
+      "changes": [
+        "Mode switch now applies per image already queued (no more mixed metadata/prompt results)",
+        "PNG detection fixed: transparent-background phrasing works even after client-side compression",
+        "Version sorting is numeric - 1.10.x will order correctly above 1.9.x",
+        "Nav bell + /updates changelog now reliably show every new release"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
+      "version": "1.8.1",
+      "date": "2026-08-23",
+      "type": "bugfix",
+      "title": "Community feed ships from the official repo only",
+      "changes": [
+        "/community content moved from database to community.json in the repository"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": "If you ran migration 0011_social_posts.sql earlier, you may delete the social_posts table - it is no longer used."
+    },
+    {
+      "version": "1.8.0",
+      "date": "2026-08-23",
+      "type": "feature",
+      "title": "Marketing banner + Community feed",
+      "changes": [
+        "announcement.json: developer-controlled dismissible banner, auto-synced to all forks",
+        "New /community feed page plus a Community nav link"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
+      "version": "1.7.3",
+      "date": "2026-08-24",
+      "type": "feature",
+      "title": "In-site update notification system",
+      "changes": [
+        "Nav bell shows a pulsing badge whenever a new release arrives",
+        "New /updates changelog page: per-version changes, bug fixes, SQL migration lists and action guides",
+        "updates.json ships with the code so forked sites see the same timeline after auto-sync"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
+      "version": "1.7.2",
+      "date": "2026-08-23",
       "type": "feature",
       "title": "Auto-sync workflow for forks",
       "changes": [
-        "Daily GitHub Action now merges official releases into every fork automatically",
+        "Hourly GitHub Action now merges official releases into every fork automatically",
         "Vercel redeploys forks by itself after each sync - zero manual work",
         "Conflicts (only when core files were customized) fail loudly with clear guidance"
       ],

@@ -8,6 +8,7 @@ import ApiKeysModal from "@/components/generator/ApiKeysModal";
 import SuccessModal from "@/components/generator/SuccessModal";
 import FallbackToast from "@/components/generator/FallbackToast";
 import { prepareImage } from "@/lib/client/image";
+import { detectVector, prepareSvg, preparePostScript } from "@/lib/client/vector";
 import {
   addToHistory,
   clearHistory,
@@ -42,8 +43,20 @@ import { getProvider, PROVIDERS } from "@/lib/ai/providers";
 import { buildCSV, buildPromptTxt, buildPromptCsv, type CsvRow } from "@/lib/csv/formats";
 import type { GeneratorSettings, GeneratorUserSettings, GeneratedMetadata } from "@/lib/types";
 
-const ACCEPTED = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp"];
+const RASTER_MIME = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp"];
+const VECTOR_EXT = ["svg", "ai", "eps", "pdf"];
 const EXPORT_EXTS = ["", "eps", "ai", "svg", "jpg", "jpeg", "png", "psd"];
+
+function isAccepted(file: File): boolean {
+  if (RASTER_MIME.includes(file.type)) return true;
+  const name = file.name.toLowerCase();
+  return VECTOR_EXT.some((ext) => name.endsWith(`.${ext}`));
+}
+
+function isPostscript(file: File): boolean {
+  const name = file.name.toLowerCase();
+  return [".ai", ".eps", ".pdf"].some((ext) => name.endsWith(ext));
+}
 
 /** Module-scope clock read (keeps component render pure). */
 function nowMs(): number {
@@ -60,6 +73,8 @@ function providerDisplayName(id: string): string {
 
 interface WorkItem extends CardItem {
   previewUrl: string;
+  /** Original file type from disk (before canvas compression). */
+  fileType: string;
 }
 
 interface Stats {
@@ -152,7 +167,7 @@ export default function GeneratorWorkbench({
         const capacity = settings.max_images_per_batch - prev.length;
         if (capacity <= 0) return prev;
         const accepted = files
-          .filter((f) => ACCEPTED.includes(f.type))
+          .filter((f) => isAccepted(f))
           .slice(0, capacity);
         const mode = getUserSettings().mode;
         return [
@@ -167,7 +182,9 @@ export default function GeneratorWorkbench({
             keywords: [],
             category: "",
             promptText: undefined,
-            previewUrl: URL.createObjectURL(file),
+            // AI/EPS/PDF have no native browser preview - show a placeholder.
+            previewUrl: isPostscript(file) ? "" : URL.createObjectURL(file),
+            fileType: file.type || file.name.slice(file.name.lastIndexOf(".") + 1),
           })),
         ];
       });
@@ -202,10 +219,25 @@ export default function GeneratorWorkbench({
   async function callGenerate(item: WorkItem): Promise<void> {
     updateItem(item.id, { status: "processing", error: undefined });
 
-    const blob = await fetch(item.previewUrl).then((r) => r.blob());
-    const file = new File([blob], item.filename, { type: blob.type || "image/jpeg" });
-    const prepared = await prepareImage(file);
-
+    // Vectors (SVG/AI/EPS/PDF) are rasterized locally; rasters downscaled.
+    let prepared;
+    const vectorKind = detectVector(item.filename);
+    if (vectorKind === "svg") {
+      const blob = await fetch(item.previewUrl).then((r) => r.blob());
+      prepared = await prepareSvg(
+        new File([blob], item.filename, { type: "image/svg+xml" })
+      );
+    } else if (vectorKind === "postscript") {
+      const blob = await fetch(item.previewUrl).then((r) => r.blob());
+      prepared = await preparePostScript(
+        new File([blob], item.filename, { type: "application/postscript" })
+      );
+    } else {
+      const blob = await fetch(item.previewUrl).then((r) => r.blob());
+      prepared = await prepareImage(
+        new File([blob], item.filename, { type: blob.type || "image/jpeg" })
+      );
+    }
     const attempts = buildAttemptPlan().filter((a) =>
       enabledProviders.includes(a.providerId)
     );
@@ -213,9 +245,15 @@ export default function GeneratorWorkbench({
       filename: item.filename,
       mimeType: prepared.mimeType,
       imageBase64: prepared.base64,
+      // Original on-disk type: PNGs keep their transparent-background
+      // phrasing even after canvas compression to JPEG.
+      pngSource: item.fileType === "image/png",
+      vectorKind: vectorKind ?? "",
       platform,
       options: {
         ...user,
+        // Per-item mode so a mixed queue never mis-parses responses.
+        mode: item.mode,
         prefix: user.usePrefix ? user.prefix : "",
         suffix: user.useSuffix ? user.suffix : "",
         negativeTitleWords: user.useNegativeTitle ? user.negativeTitleWords : "",

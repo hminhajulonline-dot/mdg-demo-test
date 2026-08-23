@@ -17,7 +17,9 @@ export interface SiteUpdate {
 const RAW = (updatesJson as { updates?: unknown }).updates;
 
 export const UPDATES: SiteUpdate[] = Array.isArray(RAW)
-  ? (RAW as SiteUpdate[]).slice().sort((a, b) => b.version.localeCompare(a.version))
+  ? (RAW as SiteUpdate[])
+      .slice()
+      .sort((a, b) => compareVersions(b.version, a.version))
   : [];
 
 export const LATEST_UPDATE: SiteUpdate | null = UPDATES[0] ?? null;

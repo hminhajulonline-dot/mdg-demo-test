@@ -92,7 +92,7 @@ export default function ResultCard({ item, platform, onUpdate, onRegenerate, onR
   const busy = item.status === "processing" || item.status === "pending";
 
   return (
-    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-surface dark:bg-surface p-4 sm:p-5">
+    <div className="group rounded-2xl border border-slate-200 dark:border-slate-800 bg-surface dark:bg-surface shadow-sm hover:shadow-md hover:border-brand/40 transition-all p-4 sm:p-5">
       {/* Header */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
@@ -101,32 +101,46 @@ export default function ResultCard({ item, platform, onUpdate, onRegenerate, onR
             <img
               src={item.previewUrl}
               alt={item.filename}
-              className="h-12 w-12 rounded-lg object-cover border border-slate-200 dark:border-slate-700"
+              className="h-14 w-14 rounded-xl object-cover ring-1 ring-slate-200 dark:ring-slate-700"
             />
-          ) : null}
+          ) : (
+            /* Vector placeholder tile (AI/EPS/PDF) */
+            <span className="inline-flex h-14 w-14 items-center justify-center rounded-xl bg-brand/10 text-brand ring-1 ring-brand/20">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="h-6 w-6">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.53 16.122a3 3 0 0 0-5.78 1.128 2.25 2.25 0 0 1-2.4 2.245 4.5 4.5 0 0 0 8.4-2.245c0-.399-.078-.78-.22-1.128Zm0 0a15.998 15.998 0 0 0 3.388-1.62m-5.043-.025a15.994 15.994 0 0 1 1.622-3.395m3.42 3.42a15.995 15.995 0 0 0 4.764-4.648l3.876-5.814a1.151 1.151 0 0 0-1.597-1.597L14.146 6.32a15.996 15.996 0 0 0-4.649 4.763m3.42 3.42a6.776 6.776 0 0 0-3.42-3.42" />
+              </svg>
+            </span>
+          )}
           <div className="min-w-0">
-            <p className="text-sm font-medium truncate" title={item.filename}>
+            <p className="text-sm font-semibold truncate" title={item.filename}>
               {item.filename}
             </p>
-            <p className="text-xs">
-              {item.status === "done" && (
-                <span className="text-emerald-600 dark:text-emerald-400">
-                  Done
+            <div className="mt-0.5">
+              {item.status === "done" ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-900/40 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} className="h-2.5 w-2.5"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
                   {item.mode === "metadata"
-                    ? ` - ${item.keywords.length} keywords`
-                    : ` - ${(item.promptText || "").length} chars`}
+                    ? `${item.keywords.length} keywords`
+                    : `${(item.promptText || "").length} chars`}
+                </span>
+              ) : item.status === "processing" ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+                  Generating
+                </span>
+              ) : item.status === "pending" ? (
+                <span className="inline-flex items-center rounded-full bg-slate-200 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                  Queued
+                </span>
+              ) : (
+                <span
+                  className="inline-flex items-center rounded-full bg-red-100 dark:bg-red-900/40 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-600 dark:text-red-400"
+                  title={item.error}
+                >
+                  Failed{item.error ? ` - ${truncate(item.error, 60)}` : ""}
                 </span>
               )}
-              {item.status === "processing" && (
-                <span className="text-amber-600 dark:text-amber-400">Generating…</span>
-              )}
-              {item.status === "pending" && <span className="text-slate-500">Queued</span>}
-              {item.status === "error" && (
-                <span className="text-red-600 dark:text-red-400" title={item.error}>
-                  Error{item.error ? ` - ${truncate(item.error, 80)}` : ""}
-                </span>
-              )}
-            </p>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
