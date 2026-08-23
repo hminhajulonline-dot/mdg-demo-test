@@ -229,8 +229,14 @@ export default function GeneratorWorkbench({
       );
     } else if (vectorKind === "postscript") {
       const blob = await fetch(item.previewUrl).then((r) => r.blob());
+      const ext = item.filename.toLowerCase().endsWith(".eps")
+        ? "eps"
+        : item.filename.toLowerCase().endsWith(".pdf")
+          ? "pdf"
+          : "ai";
       prepared = await preparePostScript(
-        new File([blob], item.filename, { type: "application/postscript" })
+        new File([blob], item.filename, { type: "application/postscript" }),
+        ext
       );
     } else {
       const blob = await fetch(item.previewUrl).then((r) => r.blob());

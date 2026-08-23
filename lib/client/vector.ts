@@ -26,10 +26,36 @@ async function loadPdfjs() {
   return pdfjsPromise;
 }
 
-/** Rasterize an AI/EPS/PDF file (AI files are usually PDF-compatible). */
-export async function preparePostScript(file: File): Promise<PreparedImage> {
+/** Rasterize an AI/EPS/PDF file. */
+export async function preparePostScript(
+  file: File,
+  ext: "ai" | "eps" | "pdf"
+): Promise<PreparedImage> {
   const pdfjs = await loadPdfjs();
-  const data = new Uint8Array(await file.arrayBuffer());
+  let data = new Uint8Array(await file.arrayBuffer());
+
+  // Some Illustrator exports prepend a plain PostScript header before the
+  // real PDF payload. Locate the "%PDF-" marker and slice to it so pdf.js
+  // gets a clean document instead of "Invalid PDF structure".
+  const marker = [0x25, 0x50, 0x44, 0x46, 0x2d]; // "%PDF-"
+  outer: for (let i = 0; i <= data.length - marker.length; i++) {
+    for (let j = 0; j < marker.length; j++) {
+      if (data[i + j] !== marker[j]) continue outer;
+    }
+    if (i > 0) data = data.slice(i);
+    break;
+  }
+
+  const looksLikePdf =
+    data[0] === 0x25 && data[1] === 0x50 && data[2] === 0x44 && data[3] === 0x46;
+
+  if (!looksLikePdf) {
+    throw new Error(
+      ext === "eps"
+        ? `${file.name}: browsers cannot render EPS directly. Open it in Illustrator and export as SVG, PNG or AI with "Create PDF Compatible File" checked, then add that file.`
+        : `${file.name}: this AI file has no PDF-compatible data. Re-save from Illustrator (File > Save As, tick "Create PDF Compatible File") or export as SVG/PNG.`
+    );
+  }
 
   const loadingTask = pdfjs.getDocument({ data });
   const doc = await loadingTask.promise;
@@ -59,6 +85,16 @@ export async function preparePostScript(file: File): Promise<PreparedImage> {
     );
     if (!blob) throw new Error("Could not render the vector file.");
     return { base64: await blobToBase64(blob), mimeType: "image/jpeg" };
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      /password|encrypt/i.test(err.message)
+    ) {
+      throw new Error(
+        `${file.name}: this file is password-protected or encrypted. Remove security in Illustrator/Acrobat and try again.`
+      );
+    }
+    throw err;
   } finally {
     void loadingTask.destroy();
   }

@@ -2,6 +2,20 @@
   "$schema": "Maintained by Plickify. Newest entries first. Fork users see this file's contents on the /updates page and via the nav bell.",
   "updates": [
     {
+      "version": "2.1.0",
+      "date": "2026-08-24",
+      "type": "bugfix",
+      "title": "AI/EPS loading fixes + bigger previews",
+      "changes": [
+        "Smart %PDF- payload detection fixes 'Invalid PDF structure' on many Illustrator exports",
+        "Clear, actionable errors: PDF-compatible AI requirement, encrypted files, and honest EPS browser limitation",
+        "Result card previews are now much larger with click-to-zoom"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": "EPS note: browsers cannot render raw PostScript. Export EPS as SVG/PNG (or AI with PDF-compatibility) before uploading."
+    },    {
       "version": "2.0.0",
       "date": "2026-08-24",
       "type": "feature",
