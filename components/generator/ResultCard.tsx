@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { getCardFields } from "@/lib/csv/formats";
+import { validateDreamstime } from "@/lib/csv/dreamstimeRules";
 import type { GenerationMode } from "@/lib/types";
 
 export async function copyText(text: string): Promise<boolean> {
@@ -33,15 +34,28 @@ export interface CardItem {
   status: "pending" | "processing" | "done" | "error";
   error?: string;
   previewUrl?: string;
+  /** Original file size in bytes. */
+  fileSize?: number;
+  /** Video file - preview plays inline instead of an <img>. */
+  isVideo?: boolean;
   // metadata result
   title: string;
   description: string;
   keywords: string[];
   category?: string;
+  /** Dreamstime: up to 3 category names. */
+  categories?: string[];
   prompt?: string; // freepik extra
   baseModel?: string;
   // img2prompt result
   promptText?: string;
+}
+
+export function formatFileSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function metadataToText(item: CardItem, platform?: string): string {
@@ -55,6 +69,9 @@ export function metadataToText(item: CardItem, platform?: string): string {
     has("title") ? `Title: ${item.title}` : "",
     has("description") ? `Description: ${item.description}` : "",
     has("keywords") ? `Keywords: ${item.keywords.join(", ")}` : "",
+    has("categories") && item.categories?.length
+      ? `Categories: ${item.categories.join(", ")}`
+      : "",
     !fields && item.category ? `Category: ${item.category}` : "",
     has("prompt") && item.prompt ? `Prompt: ${item.prompt}` : "",
   ];
@@ -64,12 +81,13 @@ export function metadataToText(item: CardItem, platform?: string): string {
 interface Props {
   item: CardItem;
   platform: string;
+  isAIGenerated?: boolean;
   onUpdate: (patch: Partial<CardItem>) => void;
   onRegenerate: () => void;
   onRemove: () => void;
 }
 
-export default function ResultCard({ item, platform, onUpdate, onRegenerate, onRemove }: Props) {
+export default function ResultCard({ item, platform, isAIGenerated, onUpdate, onRegenerate, onRemove }: Props) {
   const [copied, setCopied] = useState<string | null>(null);
 
   // Card mirrors the CSV export columns of the selected platform.
@@ -80,6 +98,7 @@ export default function ResultCard({ item, platform, onUpdate, onRegenerate, onR
   const showKeywords = has("keywords");
   const showPrompt = has("prompt");
   const showBaseModel = has("baseModel");
+  const showCategories = has("categories");
   const showCategory = platform === "general" && !showPrompt;
 
   async function doCopy(label: string, text: string) {
@@ -94,9 +113,16 @@ export default function ResultCard({ item, platform, onUpdate, onRegenerate, onR
     <div className="group rounded-2xl border border-slate-200 dark:border-slate-800 bg-surface dark:bg-surface shadow-sm hover:shadow-md hover:border-brand/40 transition-all overflow-hidden">
       {/* Header strip */}
       <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-slate-100 dark:border-slate-800">
-        <p className="text-sm font-semibold truncate" title={item.filename}>
-          {item.filename}
-        </p>
+        <div className="flex items-center gap-2 min-w-0">
+          <p className="text-sm font-semibold truncate" title={item.filename}>
+            {item.filename}
+          </p>
+          {item.fileSize ? (
+            <span className="shrink-0 rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-500 tabular-nums">
+              {formatFileSize(item.fileSize)}
+            </span>
+          ) : null}
+        </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <StatusPill item={item} />
           {!busy && (
@@ -131,7 +157,14 @@ export default function ResultCard({ item, platform, onUpdate, onRegenerate, onR
         <div className="grid md:grid-cols-2 gap-0 divide-y md:divide-y-0 md:divide-x divide-slate-100 dark:border-slate-800 md:dark:divide-slate-800">
           {/* LEFT HALF - preview */}
           <div className="relative min-h-[220px] bg-white dark:bg-slate-900/60 flex items-center justify-center p-3">
-            {item.previewUrl ? (
+            {item.previewUrl && item.isVideo ? (
+              <video
+                src={item.previewUrl}
+                controls
+                preload="metadata"
+                className="w-full max-h-[320px] rounded-lg bg-black"
+              />
+            ) : item.previewUrl ? (
               <a
                 href={item.previewUrl}
                 target="_blank"
@@ -223,6 +256,25 @@ export default function ResultCard({ item, platform, onUpdate, onRegenerate, onR
                     copied={copied === "category"}
                   />
                 ) : null}
+                {showCategories ? (
+                  <Field
+                    label={`Categories · ${Math.min(item.categories?.length ?? 0, 3)}/3`}
+                    value={(item.categories ?? []).join(", ")}
+                    rows={1}
+                    disabled={busy}
+                    onChange={(v) =>
+                      onUpdate({
+                        categories: v
+                          .split(",")
+                          .map((c) => c.trim())
+                          .filter(Boolean)
+                          .slice(0, 3),
+                      })
+                    }
+                    onCopy={() => doCopy("categories", (item.categories ?? []).join(", "))}
+                    copied={copied === "categories"}
+                  />
+                ) : null}
                 {showPrompt && item.prompt !== undefined ? (
                   <div className="grid grid-cols-[3fr_1fr] gap-2">
                     <Field
@@ -249,6 +301,9 @@ export default function ResultCard({ item, platform, onUpdate, onRegenerate, onR
                 ) : null}
               </>
             )}
+            {platform === "dreamstime" && item.status === "done" ? (
+              <DreamstimeChecks item={item} isAIGenerated={isAIGenerated} />
+            ) : null}
           </div>
         </div>
       )}
@@ -270,6 +325,41 @@ export default function ResultCard({ item, platform, onUpdate, onRegenerate, onR
           Regenerate
         </button>
       </div>
+    </div>
+  );
+}
+
+function DreamstimeChecks({
+  item,
+  isAIGenerated,
+}: {
+  item: CardItem;
+  isAIGenerated?: boolean;
+}) {
+  if (item.mode !== "metadata" || !item.title) return null;
+  const checks = validateDreamstime(
+    { title: item.title, description: item.description, keywords: item.keywords },
+    { categories: item.categories, isAIGenerated }
+  );
+  if (!checks.length) return null;
+  return (
+    <div className="mt-1 rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-1">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+        Dreamstime rules
+      </p>
+      {checks.map((c, i) => (
+        <p
+          key={i}
+          className={
+            c.level === "error"
+              ? "text-[11px] leading-snug text-red-600 dark:text-red-400"
+              : "text-[11px] leading-snug text-amber-700 dark:text-amber-300"
+          }
+        >
+          {c.level === "error" ? "✕ " : "⚠ "}
+          {c.msg}
+        </p>
+      ))}
     </div>
   );
 }

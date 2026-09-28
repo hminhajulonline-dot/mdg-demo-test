@@ -50,6 +50,8 @@ export interface GeneratedMetadata {
   description: string;
   keywords: string[];
   category?: string;
+  /** Dreamstime extras - up to 3 categories, AI-picked names. */
+  categories?: string[];
   /** Freepik (Magnific) extras */
   prompt?: string;
   baseModel?: string;
@@ -92,6 +94,8 @@ export interface GeneratorUserSettings {
   customPrompt: string;
   useProhibitedWords: boolean;
   prohibitedWords: string;
+  // dreamstime
+  isAIGenerated: boolean;
 }
 
 export const DEFAULT_USER_SETTINGS: GeneratorUserSettings = {
@@ -121,6 +125,7 @@ export const DEFAULT_USER_SETTINGS: GeneratorUserSettings = {
   customPrompt: "",
   useProhibitedWords: false,
   prohibitedWords: "",
+  isAIGenerated: false,
 };
 
 export const DEFAULT_SITE_SETTINGS: SiteSettings = {

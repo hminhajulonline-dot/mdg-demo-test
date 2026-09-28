@@ -1,13 +1,16 @@
 # Microstock Metadata Generator — by Plickify
 
-A private, AI-powered metadata generator for microstock contributors.
+A private, AI-powered toolkit for microstock contributors.
 Upload images and instantly get optimized **titles, descriptions, keywords
 and categories**, then export platform-ready CSVs for Adobe Stock,
 Shutterstock, Freepik, Vecteezy, Dreamstime, 123RF, Depositphotos, Pond5
-and more.
+and more — plus a suite of companion tools: a **Prompt Generator**
+(Manual + guided Auto engine), **EPS/AI to JPG**, **File Converter** and
+**Adobe Tracker** (keyword & contributor research).
 
-**The entire site is admin-only.** Visitors cannot sign up or log in — only
-Google accounts listed as active admins can enter the site and use the tool.
+**The entire site is admin-only.** Visitors cannot sign up — only
+authorized administrators (Google sign-in or email/password) can enter
+the site and use the tools.
 
 Fork this repository, connect **your own** Supabase project + Vercel
 deployment, run the SQL migrations once, and you have your own branded,
@@ -18,34 +21,40 @@ fully self-hostable metadata tool.
 ## Table of Contents
 
 1. [Features](#features)
-2. [Tech Stack](#tech-stack)
-3. [Requirements](#requirements)
-4. [Fork Instructions](#fork-instructions)
-5. [Local Installation](#local-installation)
-6. [Environment Variables](#environment-variables)
-7. [Supabase Project Setup](#supabase-project-setup)
-8. [Database Migrations](#database-migrations)
-9. [Storage](#storage)
-10. [Google OAuth Setup](#google-oauth-setup)
-11. [First Admin Setup](#first-admin-setup)
-12. [AI API Keys (BYOK)](#ai-api-keys-byok)
-13. [Vercel Deployment](#vercel-deployment)
-14. [Custom Domain](#custom-domain)
-15. [Admin Panel Guide](#admin-panel-guide)
-16. [Editing Page Content](#editing-page-content)
-17. [Branding & Theme](#branding--theme)
-18. [Updating the Project](#updating-the-project)
-19. [Troubleshooting](#troubleshooting)
-20. [Security Notes](#security-notes)
+2. [Tools](#tools)
+3. [Tech Stack](#tech-stack)
+4. [Requirements](#requirements)
+5. [Fork Instructions](#fork-instructions)
+6. [Local Installation](#local-installation)
+7. [Environment Variables](#environment-variables)
+8. [Supabase Project Setup](#supabase-project-setup)
+9. [Database Migrations](#database-migrations)
+10. [Storage](#storage)
+11. [Google OAuth Setup](#google-oauth-setup)
+12. [First Admin Setup](#first-admin-setup)
+13. [AI API Keys (BYOK)](#ai-api-keys-byok)
+14. [Vercel Deployment](#vercel-deployment)
+15. [Custom Domain](#custom-domain)
+16. [Admin Panel Guide](#admin-panel-guide)
+17. [Editing Page Content](#editing-page-content)
+18. [Branding & Theme](#branding--theme)
+19. [Updating the Project](#updating-the-project)
+20. [Community Feed](#community-feed)
+21. [Troubleshooting](#troubleshooting)
+22. [Security Notes](#security-notes)
 
 ---
 
 ## Features
 
 ### Access control
-- Whole site gated behind Google login at the middleware level
+- Whole site gated behind login at the middleware level
+- Two sign-in methods for admins: **Google OAuth** and
+  **email/password** (with a forgot-password reset link), both on
+  `/login`
 - Only `admin_users` rows with `status = 'active'` can enter
-- No email/password accounts, no user registration anywhere
+- No public registration anywhere — accounts are created by the first
+  Google sign-in or by adding the admin by email
 
 ### Generator (CSV Tree parity)
 - Two modes: **Metadata** and **Image-to-Prompt** (`/generator?mode=img2prompt`)
@@ -92,11 +101,34 @@ fully self-hostable metadata tool.
 | Generator Settings | Title/description/keyword bounds, category list, language, extra instructions, batch size (up to 200), hourly rate limit (**0 = unlimited**) |
 | AI Providers | Toggle which of the 13 providers users can add |
 | AI Status | Read-only status of the server env fallback key |
+| Master Prompts | CRUD for the Auto Engine's master prompts (title, description, system prompt, active toggle) |
+| Adobe Tracker | Tool access, daily quota, results per search, key-source routing, site API key pool with per-key test |
 | Admins | Add (by Google email), disable, remove admins — last-active-admin protection |
 | Usage | System generation log (no personal data) |
 
 Everything above is stored in the database — changes apply to the live site
 immediately, no redeploy needed.
+
+## Tools
+
+Every tool lives under `/tools` (header **Tools** dropdown, `/tools`
+index) and shares the same admin-only access:
+
+| Tool | Route | What it does |
+| --- | --- | --- |
+| Metadata Generator | `/generator` | Two modes: **Metadata** (titles/descriptions/keywords/categories → per-platform CSV) and **Image-to-Prompt** (`/generator?mode=img2prompt`) |
+| Prompt Generator | `/tools/prompt-generator` | **Manual Engine**: AI keyword research, reference-image description, IP/copyright audit, stock-safe prompt compilation with TXT/CSV export. `/tools/prompt-generator/auto` adds the guided **Auto Engine** driven by admin-managed master prompts |
+| EPS/AI to JPG | `/tools/eps-to-jpg` | Batch-convert EPS, AI, PS and PDF to 150 PPI JPGs entirely in the browser (Ghostscript WASM) with previews and ZIP download |
+| File Converter | `/tools/converter` | Image→Image (quality control), Images→PDF (size/orientation/margins), PDF→Images (72/150/300 DPI) and a smart Compressor — all in the browser |
+| Adobe Tracker | `/tools/adobe-tracker` | Keyword & contributor research on Adobe Stock: per-asset downloads/views/categories/keywords, content-type & generative-AI filters, CSV/TXT export, moodboard, CSV Tree parity deep-links (`?mode=&q=`) |
+
+The Adobe Tracker ships with a zero-config **mock provider** (sample
+data). Point it at live data via env vars (`ADOBE_TRACKER_PROVIDER`,
+`APIFY_TOKEN`, `ADOBE_API_KEY`) or manage keys and limits centrally in
+**Admin → Tools → Adobe Tracker** (shared key pool with per-key test and
+failover, daily quota, BYO popup copy). A browser-stored own Apify key
+is also supported in the tool's API panel — keys entered there never
+reach the server or database.
 
 ## Tech Stack
 
@@ -105,7 +137,7 @@ immediately, no redeploy needed.
 | Framework | Next.js 16 (App Router) + TypeScript |
 | Styling | Tailwind CSS v4 |
 | Database | Supabase PostgreSQL (+ Row Level Security) |
-| Auth | Supabase Auth — Google provider only |
+| Auth | Supabase Auth — Google provider + email/password (admin-only) |
 | Storage | Supabase Storage (branding assets) |
 | Hosting | Vercel |
 
@@ -158,6 +190,11 @@ Copy `.env.example` to `.env.local`:
 | `AI_API_KEY` | optional | Server fallback key when no personal keys exist |
 | `AI_MODEL` | optional | Override the default model |
 | `AI_BASE_URL` | optional | Custom OpenAI-compatible base URL (`AI_PROVIDER=custom`) |
+| `ADOBE_TRACKER_PROVIDER` | optional | `mock` (default sample data), `apify` or `adobe` |
+| `APIFY_TOKEN` | optional | Apify actor token for live Adobe Tracker data (the Admin key pool takes precedence) |
+| `APIFY_ACTOR` | optional | Override the default Apify actor (e.g. `igolaizola~adobe-stock-scraper`) |
+| `ADOBE_API_KEY` | optional | Official Adobe Stock API key (metadata only — no download counts) |
+| `ADOBE_TRACKER_CACHE_TTL` | optional | Adobe Tracker response cache TTL in seconds (default 21600 = 6h) |
 | `NEXT_PUBLIC_APP_URL` | recommended | Your final URL (localhost or production domain) |
 
 > The server AI key is a **fallback only**. The intended flow is adding your
@@ -188,6 +225,8 @@ All tables ship as versioned SQL in `supabase/migrations/`:
 0008_raise_batch_limit.sql      raises existing rows to the new cap
 0009_page_content.sql           editable hero/features/steps/about content
 0010_enabled_providers.sql      admin-selected AI providers
+0011_master_prompts.sql         Auto Engine master prompts (CRUD)
+0012_adobe_tracker.sql          Adobe Tracker cache/settings/keys/quota
 ```
 
 Run them **in order** using either method:
@@ -263,6 +302,12 @@ the site admin-only.
    ```
 4. Log in again → `/admin` opens.
 
+**Email/password login:** after your account exists in Supabase Auth
+(e.g. from the first Google sign-in), click **Forgot password** on
+`/login` — the emailed recovery link lets you set a password, after
+which you can sign in with email + password instead of Google. Both
+methods still require an active `admin_users` row.
+
 **More admins afterwards:** no SQL needed — use **Admin Panel → Admins →
 Add by Google email**. The person must have signed in via Google at least
 once so their account exists.
@@ -329,6 +374,10 @@ Open `/admin` (or log in through `/login`). Highlights:
 - **Generator Settings** — output bounds, category list, language, extra
   instructions, max batch size, hourly rate limit (**0 = unlimited**).
 - **AI Providers** — choose which providers users can add.
+- **Master Prompts** — manage the prompts the Auto Engine offers.
+- **Adobe Tracker** — enable the tool, set the daily quota and results
+  per search, choose the key source (admin pool / user BYO / env) and
+  manage the site Apify key pool (label, active toggle, per-key test).
 - **Admins** — manage who has access.
 - **Usage** — system-level generation log.
 
@@ -461,7 +510,8 @@ Migrations not fully applied — see previous item.
 
 ## Security Notes
 
-- Google OAuth only; no passwords exist to leak.
+- Admin-only access: Google OAuth **or** email/password via Supabase
+  Auth; no public signup exists anywhere.
 - Authorization = valid session **AND** active `admin_users` row, enforced
   server-side on every page and API route (middleware gates the whole site).
 - RLS everywhere: anonymous clients can't write anything; `usage_logs` is
@@ -469,6 +519,11 @@ Migrations not fully applied — see previous item.
 - `SUPABASE_SERVICE_ROLE_KEY` and any server AI key stay server-side.
 - BYOK keys live in localStorage only and travel per-request over HTTPS to
   your own deployment, which forwards them solely to the chosen provider.
+- Adobe Tracker: site Apify keys live only in the `adobe_tracker_keys`
+  table (service-role access only), are masked in the admin UI, and are
+  never logged; a personal tracker key added in the tool stays in
+  that browser's localStorage and travels only in the `x-tracker-key`
+  request header.
 - Generation validates image type/size and rate-limits per IP (optional).
 - Uploaded generator images are processed in memory — never persisted.
 - Usage logs store a salted IP hash, never raw IPs.

@@ -1,6 +1,13 @@
 import type { GeneratedMetadata } from "@/lib/types";
 import { resolveProvider, type ResolvedProvider } from "@/lib/ai/providers";
 import type { PromptOptions } from "@/lib/ai/prompts";
+import {
+  AI_CATEGORY_ID,
+  AI_DISCLOSURE,
+  endsWithAIDisclosure,
+  toCategoryIds,
+  toCategoryNames,
+} from "@/lib/csv/dreamstimeRules";
 
 const REQUEST_TIMEOUT_MS = 90_000;
 
@@ -8,6 +15,33 @@ export interface GenerateInput {
   imageBase64: string; // raw base64, no data: prefix
   mimeType: string;
   prompt: string;
+}
+
+/** Text (or optional-image) call used by the tools' AI passes. */
+export interface TextInput {
+  prompt: string;
+  imageBase64?: string; // raw base64, no data: prefix
+  mimeType?: string;
+}
+
+export interface TextCallOptions {
+  jsonMode?: boolean;
+  maxTokens?: number;
+  temperature?: number;
+}
+
+/**
+ * Single dispatch point for every provider kind. Image parts are optional,
+ * so text-only instructions (prompt generator tools) share this path.
+ */
+export async function callAiProvider(
+  provider: ResolvedProvider,
+  input: TextInput,
+  opts: TextCallOptions = {}
+): Promise<string> {
+  if (provider.def.kind === "gemini") return callGemini(provider, input, opts);
+  if (provider.def.kind === "cloudflare") return callCloudflare(provider, input, opts);
+  return callOpenAICompatible(provider, input, opts);
 }
 
 export interface GenerateOutcome {
@@ -37,10 +71,9 @@ export async function generateWithAi(
     );
   }
 
-  let rawText = "";
-  if (resolved.def.kind === "gemini") rawText = await callGemini(resolved, input);
-  else if (resolved.def.kind === "cloudflare") rawText = await callCloudflare(resolved, input);
-  else rawText = await callOpenAICompatible(resolved, input);
+  const rawText = await callAiProvider(resolved, input, {
+    jsonMode: options.mode !== "img2prompt",
+  });
 
   const durationMs = Date.now() - started;
 
@@ -59,7 +92,19 @@ export async function generateWithAi(
 /* Provider calls                                                          */
 /* ---------------------------------------------------------------------- */
 
-async function callOpenAICompatible(provider: ResolvedProvider, input: GenerateInput): Promise<string> {
+async function callOpenAICompatible(
+  provider: ResolvedProvider,
+  input: TextInput,
+  opts: TextCallOptions = {}
+): Promise<string> {
+  const content: unknown[] = [{ type: "text", text: input.prompt }];
+  if (input.imageBase64 && input.mimeType) {
+    content.push({
+      type: "image_url",
+      image_url: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
+    });
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -72,20 +117,9 @@ async function callOpenAICompatible(provider: ResolvedProvider, input: GenerateI
       },
       body: JSON.stringify({
         model: provider.model,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: input.prompt },
-              {
-                type: "image_url",
-                image_url: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
-              },
-            ],
-          },
-        ],
-        temperature: 0.4,
-        max_tokens: 1024,
+        messages: [{ role: "user", content }],
+        temperature: opts.temperature ?? 0.4,
+        max_tokens: opts.maxTokens ?? 1024,
       }),
     });
 
@@ -100,13 +134,25 @@ async function callOpenAICompatible(provider: ResolvedProvider, input: GenerateI
   }
 }
 
-async function callCloudflare(provider: ResolvedProvider, input: GenerateInput): Promise<string> {
+async function callCloudflare(
+  provider: ResolvedProvider,
+  input: TextInput,
+  opts: TextCallOptions = {}
+): Promise<string> {
   // Key format: ACCOUNT_ID:API_TOKEN
   const sep = provider.apiKey.indexOf(":");
   if (sep <= 0) throw new Error("Cloudflare key must be ACCOUNT_ID:API_TOKEN.");
   const accountId = provider.apiKey.slice(0, sep);
   const token = provider.apiKey.slice(sep + 1);
   const url = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${encodeURIComponent(provider.model)}`;
+
+  const content: unknown[] = [{ type: "text", text: input.prompt }];
+  if (input.imageBase64 && input.mimeType) {
+    content.push({
+      type: "image_url",
+      image_url: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
+    });
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -119,19 +165,9 @@ async function callCloudflare(provider: ResolvedProvider, input: GenerateInput):
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: input.prompt },
-              {
-                type: "image_url",
-                image_url: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
-              },
-            ],
-          },
-        ],
-        max_tokens: 1024,
+        messages: [{ role: "user", content }],
+        max_tokens: opts.maxTokens ?? 1024,
+        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       }),
     });
     if (!res.ok) {
@@ -145,8 +181,55 @@ async function callCloudflare(provider: ResolvedProvider, input: GenerateInput):
   }
 }
 
-async function callGemini(provider: ResolvedProvider, input: GenerateInput): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${provider.model}:generateContent?key=${encodeURIComponent(provider.apiKey)}`;
+/** CSV Tree's lite→full Gemini cascade (used when the preferred model fails). */
+const GEMINI_MODEL_CASCADE = [
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash",
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
+  "gemini-2.0-flash-lite",
+  "gemini-1.5-flash",
+];
+
+async function callGemini(
+  provider: ResolvedProvider,
+  input: TextInput,
+  opts: TextCallOptions = {}
+): Promise<string> {
+  const jsonMode = opts.jsonMode === true;
+  const models = [
+    provider.model,
+    ...GEMINI_MODEL_CASCADE.filter((m) => m !== provider.model),
+  ];
+  let lastError: Error | null = null;
+  for (const model of models) {
+    try {
+      return await callGeminiModel(provider, input, model, jsonMode, true, opts);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const msg = lastError.message;
+      // Quota/429 = key-level problem: stop and let the client rotate keys
+      // instead of burning the remaining models on a dead key.
+      if (/\(429\)|quota/i.test(msg)) throw lastError;
+      // Otherwise (model missing, 400s) try the next model in the cascade.
+    }
+  }
+  throw lastError ?? new Error("Gemini request failed.");
+}
+
+async function callGeminiModel(
+  provider: ResolvedProvider,
+  input: TextInput,
+  model: string,
+  jsonMode: boolean,
+  allowNoJsonMime = true,
+  opts: TextCallOptions = {}
+): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(provider.apiKey)}`;
+  const requestParts: unknown[] = [{ text: input.prompt }];
+  if (input.imageBase64 && input.mimeType) {
+    requestParts.push({ inline_data: { mime_type: input.mimeType, data: input.imageBase64 } });
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -155,20 +238,23 @@ async function callGemini(provider: ResolvedProvider, input: GenerateInput): Pro
       signal: controller.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: input.prompt },
-              { inline_data: { mime_type: input.mimeType, data: input.imageBase64 } },
-            ],
-          },
-        ],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 1024 },
+        contents: [{ parts: requestParts }],
+        generationConfig: {
+          temperature: opts.temperature ?? 0.4,
+          maxOutputTokens: opts.maxTokens ?? (jsonMode ? 2048 : 4096),
+          // Forces clean JSON out of Gemini for metadata mode.
+          ...(jsonMode ? { responseMimeType: "application/json" } : {}),
+        },
       }),
     });
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
+      // Some models reject responseMimeType - retry once without it.
+      if (res.status === 400 && jsonMode && allowNoJsonMime && /responseMimeType|response_mime_type/i.test(body)) {
+        clearTimeout(timer);
+        return callGeminiModel(provider, input, model, jsonMode, false, opts);
+      }
       throw new Error(`AI request failed (${res.status}): ${truncate(body, 300)}`);
     }
     const json = await res.json();
@@ -365,11 +451,32 @@ export function enforceMetadata(
     baseModel = typeof meta.baseModel === "string" && meta.baseModel.trim() ? meta.baseModel.trim() : "leonardo";
   }
 
+  // Dreamstime categories: normalise whatever came back to canonical names
+  // (max 3), forcing the AI category when the visitor flagged the batch.
+  let categories: string[] | undefined;
+  if (o.platform === "dreamstime") {
+    let catIds = toCategoryIds(meta.categories);
+    if (o.isAIGenerated && !catIds.includes(AI_CATEGORY_ID)) {
+      catIds = [AI_CATEGORY_ID, ...catIds];
+    }
+    const names = toCategoryNames(catIds).slice(0, 3);
+    if (names.length) categories = names;
+  }
+
+  // Dreamstime AI disclosure must be the closing sentence - reserve room for
+  // it BEFORE the final truncation so it can never be the part cut off.
+  let finalDescription = truncateWordBoundary(description, 2000);
+  if (o.platform === "dreamstime" && o.isAIGenerated && !endsWithAIDisclosure(finalDescription)) {
+    const tail = ` ${AI_DISCLOSURE}`;
+    finalDescription = `${truncateWordBoundary(description, Math.max(0, 2000 - tail.length))}${tail}`.trim();
+  }
+
   return {
     title,
-    description: truncateWordBoundary(description, 2000),
+    description: finalDescription,
     keywords,
     category: category || undefined,
+    categories,
     prompt: freepikPrompt,
     baseModel,
   };

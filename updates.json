@@ -2,6 +2,120 @@
   "$schema": "Maintained by Plickify. Newest entries first. Fork users see this file's contents on the /updates page and via the nav bell.",
   "updates": [
     {
+      "version": "2.8.1",
+      "date": "2026-09-28",
+      "type": "docs",
+      "title": "README overhaul, sitemap & robots, fresh copy",
+      "changes": [
+        "README rewritten to match reality: the full tool suite (Prompt Generator, EPS/AI to JPG, File Converter, Adobe Tracker), email/password admin login, migrations 0011-0012 and the Adobe Tracker environment variables",
+        "New /sitemap.xml and /robots.txt generated from the tools registry, with admin/API/auth routes excluded",
+        "Stale open-access copy removed from the login page and the generator sidebar - the site now consistently says it is admin-only"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
+      "version": "2.8.0",
+      "date": "2026-09-28",
+      "type": "feature",
+      "title": "Adobe Tracker: keyword & contributor research",
+      "changes": [
+        "New tool at /tools/adobe-tracker - search any keyword or track any contributor on Adobe Stock with per-asset download counts, views, categories and keywords, sortable with content-type and generative-AI filters",
+        "Download results as CSV or titles as TXT, save assets to a local moodboard, and click a creator or keyword to jump straight into a new search",
+        "Pluggable providers: zero-config mock data out of the box, Apify actor or the official Adobe Stock API via env vars; 6-hour server-side response cache",
+        "Own Apify key support in the tool (stored only in your browser) with live usage/spend status, plus a shared daily quota and BYO popup copy you configure",
+        "New admin page at /admin/adobe-tracker - access limits, results per search, key-source routing and the site API key pool with per-key test and failover"
+      ],
+      "bugfixes": [],
+      "migrationRequired": true,
+      "migrations": ["supabase/migrations/0012_adobe_tracker.sql"],
+      "action": null
+    },
+    {
+      "version": "2.7.0",
+      "date": "2026-09-28",
+      "type": "feature",
+      "title": "Two new tools: EPS/AI to JPG + File Converter",
+      "changes": [
+        "EPS/AI to JPG at /tools/eps-to-jpg - batch-convert EPS, AI, PS and PDF to 150 PPI JPGs with Ghostscript WASM, per-file previews with zoom, and Download All (ZIP)",
+        "File Converter at /tools/converter - Image to Image (PNG/JPG/JPEG/WebP/BMP with quality control), Images to PDF (page size, orientation, fit, margin) and PDF to Images (72/150/300 DPI), plus a smart Compressor tab with live size savings",
+        "Both tools run fully in the browser - files never upload to a server"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
+      "version": "2.6.0",
+      "date": "2026-09-28",
+      "type": "feature",
+      "title": "Prompt Generator: Manual Engine + guided Auto Engine",
+      "changes": [
+        "New tool at /tools/prompt-generator - the Manual Engine: AI keyword research, reference-image description, IP/copyright audit, and stock-safe prompt compilation with raster/vector filters, TXT/CSV export and per-card copy",
+        "New Auto Engine at /tools/prompt-generator/auto: pick a master prompt, press Start, answer the AI's questions with buttons, set a count, and get full-length production-ready prompts one by one",
+        "Admin CRUD for master prompts at /admin/master-prompts - title, description, system prompt, active toggle; active prompts appear in the Auto Engine picker",
+        "New generic /api/ai/text endpoint with BYOK provider rotation, rate limiting and usage logging; header Tools dropdown + /tools index page"
+      ],
+      "bugfixes": [],
+      "migrationRequired": true,
+      "migrations": ["supabase/migrations/0011_master_prompts.sql"],
+      "action": "Run the 0011_master_prompts.sql migration, then add your first master prompt in Admin > Tools > Master Prompts so the Auto Engine has something to walk through."
+    },
+    {
+      "version": "2.5.0",
+      "date": "2026-09-28",
+      "type": "feature",
+      "title": "Email + password admin login (alongside Google)",
+      "changes": [
+        "Login page gains an email/password form - the site stays admin-only: passwords that don't belong to an authorized admin are rejected and the session is signed out immediately",
+        "Forgot password? sends a Supabase reset email; the link returns to /login where a set-password form appears",
+        "Non-admin accounts are refused with a clear message; Google login remains unchanged"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": "To use password login, set a password for the admin account (Supabase dashboard or the Forgot password link) and make sure the site URL is allowed as a redirect in Supabase Auth settings."
+    },
+    {
+      "version": "2.4.0",
+      "date": "2026-09-28",
+      "type": "feature",
+      "title": "Generator parity with CSV Tree - parallel queue, video frames, Ghostscript EPS",
+      "changes": [
+        "Generation now runs 3 files in parallel with per-key RPM pacing, live throughput/ETA stats, auto-retry (max 3 passes) and a manual Retry Failed button",
+        "Video uploads (MP4/MOV) supported - a frame at 10% of the clip is extracted and sent to the AI",
+        "Vector previews rebuilt: pdf.js -> TIFF (incl. JPEG-compressed) -> embedded JPEG -> Ghostscript WASM (~16 MB, loads once) so pure PostScript EPS/AI finally renders",
+        "Gemini now cascades lite->flash->pro when the preferred model fails and requests strict JSON output (bigger token budget)",
+        "Dreamstime: AI picks up to 3 Categories, CSV gains a Categories column, in-card rule warnings, and an 'AI-generated' toggle that enforces the disclosure sentence",
+        "Uploader warns with toasts when the batch is full; object URLs are revoked on clear"
+      ],
+      "bugfixes": [
+        "Provider fallback plan now covers OpenAI and Cerebras keys and uses cooldown keys as a last resort",
+        "Daily-quota errors park every key of that provider instead of retrying dead keys"
+      ],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
+      "version": "2.3.0",
+      "date": "2026-08-23",
+      "type": "feature",
+      "title": "Cleaner generator, actionable Usage page",
+      "changes": [
+        "Removed the 'Recent generations' strip from the generator for a cleaner workspace",
+        "Removed the AI Status admin page and its sidebar entries",
+        "Usage page rebuilt: all-time / 24h / 7-day failure stats and a richer request table"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
       "version": "2.2.3",
       "date": "2026-08-24",
       "type": "bugfix",
