@@ -32,7 +32,7 @@ export const TOOLS: ToolDef[] = [
     short: "EPS/AI → JPG",
     description:
       "Convert EPS, AI, PS and PDF files to crisp JPGs in your browser — batch mode with ZIP download.",
-    status: "soon",
+    status: "live",
     icon: "M2.25 15.75l5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M18 12h.008v.008H18V12Zm-15 3.75V16.5A2.25 2.25 0 0 0 5.25 18.75h13.5A2.25 2.25 0 0 0 21 16.5v-1.5m-18 0V6A2.25 2.25 0 0 1 5.25 3.75h13.5A2.25 2.25 0 0 1 21 6v9.75m-18 0h18",
   },
   {
@@ -42,7 +42,7 @@ export const TOOLS: ToolDef[] = [
     short: "File Converter",
     description:
       "Convert images, PDFs and more between formats — plus smart compression, entirely in your browser.",
-    status: "soon",
+    status: "live",
     icon: "M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5",
   },
   {
