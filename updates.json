@@ -2,6 +2,23 @@
   "$schema": "Maintained by Plickify. Newest entries first. Fork users see this file's contents on the /updates page and via the nav bell.",
   "updates": [
     {
+      "version": "2.8.0",
+      "date": "2026-09-28",
+      "type": "feature",
+      "title": "Adobe Tracker: keyword & contributor research",
+      "changes": [
+        "New tool at /tools/adobe-tracker - search any keyword or track any contributor on Adobe Stock with per-asset download counts, views, categories and keywords, sortable with content-type and generative-AI filters",
+        "Download results as CSV or titles as TXT, save assets to a local moodboard, and click a creator or keyword to jump straight into a new search",
+        "Pluggable providers: zero-config mock data out of the box, Apify actor or the official Adobe Stock API via env vars; 6-hour server-side response cache",
+        "Own Apify key support in the tool (stored only in your browser) with live usage/spend status, plus a shared daily quota and BYO popup copy you configure",
+        "New admin page at /admin/adobe-tracker - access limits, results per search, key-source routing and the site API key pool with per-key test and failover"
+      ],
+      "bugfixes": [],
+      "migrationRequired": true,
+      "migrations": ["supabase/migrations/0012_adobe_tracker.sql"],
+      "action": null
+    },
+    {
       "version": "2.7.0",
       "date": "2026-09-28",
       "type": "feature",
