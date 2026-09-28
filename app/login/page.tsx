@@ -1,18 +1,20 @@
 import { redirect } from "next/navigation";
 import { getAdminStatus } from "@/lib/auth";
 import GoogleLoginButton from "@/components/admin/GoogleLoginButton";
+import EmailPasswordLogin from "@/components/admin/EmailPasswordLogin";
 
 export const metadata = { title: "Admin Login" };
 
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; next?: string }>;
+  searchParams: Promise<{ error?: string; next?: string; code?: string }>;
 }) {
   const params = await searchParams;
-  // Already signed in as admin? Straight in.
+  // Already signed in as admin? Straight in - unless this is a password
+  // recovery link (?code=...), which the client form must consume first.
   const { isAdmin } = await getAdminStatus();
-  if (isAdmin) redirect(params.next?.startsWith("/") ? params.next : "/");
+  if (isAdmin && !params.code) redirect(params.next?.startsWith("/") ? params.next : "/");
 
   return (
     <main className="flex-1 flex items-center justify-center px-4 py-16">
@@ -29,6 +31,14 @@ export default async function LoginPage({
               : decodeURIComponent(params.error)}
           </p>
         ) : null}
+
+        <EmailPasswordLogin next={params.next} />
+
+        <div className="mt-6 flex items-center gap-3" aria-hidden>
+          <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">or</span>
+          <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+        </div>
 
         <GoogleLoginButton next={params.next} />
 
