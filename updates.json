@@ -2,6 +2,22 @@
   "$schema": "Maintained by Plickify. Newest entries first. Fork users see this file's contents on the /updates page and via the nav bell.",
   "updates": [
     {
+      "version": "2.6.0",
+      "date": "2026-09-28",
+      "type": "feature",
+      "title": "Prompt Generator: Manual Engine + guided Auto Engine",
+      "changes": [
+        "New tool at /tools/prompt-generator - the Manual Engine: AI keyword research, reference-image description, IP/copyright audit, and stock-safe prompt compilation with raster/vector filters, TXT/CSV export and per-card copy",
+        "New Auto Engine at /tools/prompt-generator/auto: pick a master prompt, press Start, answer the AI's questions with buttons, set a count, and get full-length production-ready prompts one by one",
+        "Admin CRUD for master prompts at /admin/master-prompts - title, description, system prompt, active toggle; active prompts appear in the Auto Engine picker",
+        "New generic /api/ai/text endpoint with BYOK provider rotation, rate limiting and usage logging; header Tools dropdown + /tools index page"
+      ],
+      "bugfixes": [],
+      "migrationRequired": true,
+      "migrations": ["supabase/migrations/0011_master_prompts.sql"],
+      "action": "Run the 0011_master_prompts.sql migration, then add your first master prompt in Admin > Tools > Master Prompts so the Auto Engine has something to walk through."
+    },
+    {
       "version": "2.5.0",
       "date": "2026-09-28",
       "type": "feature",

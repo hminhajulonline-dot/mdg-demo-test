@@ -17,6 +17,33 @@ export interface GenerateInput {
   prompt: string;
 }
 
+/** Text (or optional-image) call used by the tools' AI passes. */
+export interface TextInput {
+  prompt: string;
+  imageBase64?: string; // raw base64, no data: prefix
+  mimeType?: string;
+}
+
+export interface TextCallOptions {
+  jsonMode?: boolean;
+  maxTokens?: number;
+  temperature?: number;
+}
+
+/**
+ * Single dispatch point for every provider kind. Image parts are optional,
+ * so text-only instructions (prompt generator tools) share this path.
+ */
+export async function callAiProvider(
+  provider: ResolvedProvider,
+  input: TextInput,
+  opts: TextCallOptions = {}
+): Promise<string> {
+  if (provider.def.kind === "gemini") return callGemini(provider, input, opts);
+  if (provider.def.kind === "cloudflare") return callCloudflare(provider, input, opts);
+  return callOpenAICompatible(provider, input, opts);
+}
+
 export interface GenerateOutcome {
   metadata: GeneratedMetadata | null; // metadata mode
   promptText: string | null; // img2prompt mode
@@ -44,11 +71,9 @@ export async function generateWithAi(
     );
   }
 
-  let rawText = "";
-  if (resolved.def.kind === "gemini")
-    rawText = await callGemini(resolved, input, options.mode !== "img2prompt");
-  else if (resolved.def.kind === "cloudflare") rawText = await callCloudflare(resolved, input);
-  else rawText = await callOpenAICompatible(resolved, input);
+  const rawText = await callAiProvider(resolved, input, {
+    jsonMode: options.mode !== "img2prompt",
+  });
 
   const durationMs = Date.now() - started;
 
@@ -67,7 +92,19 @@ export async function generateWithAi(
 /* Provider calls                                                          */
 /* ---------------------------------------------------------------------- */
 
-async function callOpenAICompatible(provider: ResolvedProvider, input: GenerateInput): Promise<string> {
+async function callOpenAICompatible(
+  provider: ResolvedProvider,
+  input: TextInput,
+  opts: TextCallOptions = {}
+): Promise<string> {
+  const content: unknown[] = [{ type: "text", text: input.prompt }];
+  if (input.imageBase64 && input.mimeType) {
+    content.push({
+      type: "image_url",
+      image_url: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
+    });
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -80,20 +117,9 @@ async function callOpenAICompatible(provider: ResolvedProvider, input: GenerateI
       },
       body: JSON.stringify({
         model: provider.model,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: input.prompt },
-              {
-                type: "image_url",
-                image_url: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
-              },
-            ],
-          },
-        ],
-        temperature: 0.4,
-        max_tokens: 1024,
+        messages: [{ role: "user", content }],
+        temperature: opts.temperature ?? 0.4,
+        max_tokens: opts.maxTokens ?? 1024,
       }),
     });
 
@@ -108,13 +134,25 @@ async function callOpenAICompatible(provider: ResolvedProvider, input: GenerateI
   }
 }
 
-async function callCloudflare(provider: ResolvedProvider, input: GenerateInput): Promise<string> {
+async function callCloudflare(
+  provider: ResolvedProvider,
+  input: TextInput,
+  opts: TextCallOptions = {}
+): Promise<string> {
   // Key format: ACCOUNT_ID:API_TOKEN
   const sep = provider.apiKey.indexOf(":");
   if (sep <= 0) throw new Error("Cloudflare key must be ACCOUNT_ID:API_TOKEN.");
   const accountId = provider.apiKey.slice(0, sep);
   const token = provider.apiKey.slice(sep + 1);
   const url = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run/${encodeURIComponent(provider.model)}`;
+
+  const content: unknown[] = [{ type: "text", text: input.prompt }];
+  if (input.imageBase64 && input.mimeType) {
+    content.push({
+      type: "image_url",
+      image_url: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
+    });
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -127,19 +165,9 @@ async function callCloudflare(provider: ResolvedProvider, input: GenerateInput):
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: input.prompt },
-              {
-                type: "image_url",
-                image_url: { url: `data:${input.mimeType};base64,${input.imageBase64}` },
-              },
-            ],
-          },
-        ],
-        max_tokens: 1024,
+        messages: [{ role: "user", content }],
+        max_tokens: opts.maxTokens ?? 1024,
+        ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       }),
     });
     if (!res.ok) {
@@ -165,9 +193,10 @@ const GEMINI_MODEL_CASCADE = [
 
 async function callGemini(
   provider: ResolvedProvider,
-  input: GenerateInput,
-  jsonMode: boolean
+  input: TextInput,
+  opts: TextCallOptions = {}
 ): Promise<string> {
+  const jsonMode = opts.jsonMode === true;
   const models = [
     provider.model,
     ...GEMINI_MODEL_CASCADE.filter((m) => m !== provider.model),
@@ -175,7 +204,7 @@ async function callGemini(
   let lastError: Error | null = null;
   for (const model of models) {
     try {
-      return await callGeminiModel(provider, input, model, jsonMode);
+      return await callGeminiModel(provider, input, model, jsonMode, true, opts);
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       const msg = lastError.message;
@@ -190,12 +219,17 @@ async function callGemini(
 
 async function callGeminiModel(
   provider: ResolvedProvider,
-  input: GenerateInput,
+  input: TextInput,
   model: string,
   jsonMode: boolean,
-  allowNoJsonMime = true
+  allowNoJsonMime = true,
+  opts: TextCallOptions = {}
 ): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(provider.apiKey)}`;
+  const requestParts: unknown[] = [{ text: input.prompt }];
+  if (input.imageBase64 && input.mimeType) {
+    requestParts.push({ inline_data: { mime_type: input.mimeType, data: input.imageBase64 } });
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -204,17 +238,10 @@ async function callGeminiModel(
       signal: controller.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: input.prompt },
-              { inline_data: { mime_type: input.mimeType, data: input.imageBase64 } },
-            ],
-          },
-        ],
+        contents: [{ parts: requestParts }],
         generationConfig: {
-          temperature: 0.4,
-          maxOutputTokens: jsonMode ? 2048 : 4096,
+          temperature: opts.temperature ?? 0.4,
+          maxOutputTokens: opts.maxTokens ?? (jsonMode ? 2048 : 4096),
           // Forces clean JSON out of Gemini for metadata mode.
           ...(jsonMode ? { responseMimeType: "application/json" } : {}),
         },
@@ -226,7 +253,7 @@ async function callGeminiModel(
       // Some models reject responseMimeType - retry once without it.
       if (res.status === 400 && jsonMode && allowNoJsonMime && /responseMimeType|response_mime_type/i.test(body)) {
         clearTimeout(timer);
-        return callGeminiModel(provider, input, model, jsonMode, false);
+        return callGeminiModel(provider, input, model, jsonMode, false, opts);
       }
       throw new Error(`AI request failed (${res.status}): ${truncate(body, 300)}`);
     }

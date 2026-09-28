@@ -4,6 +4,7 @@ import ThemeToggle from "@/components/branding/ThemeToggle";
 import UserProfile from "@/components/branding/UserProfile";
 import HealthBadge from "@/components/branding/HealthBadge";
 import DeveloperMenu from "@/components/branding/DeveloperMenu";
+import ToolsMenu from "@/components/branding/ToolsMenu";
 import UpdateBell from "@/components/branding/UpdateBell";
 import AnnouncementBanner from "@/components/branding/AnnouncementBanner";
 import { getAdminStatus } from "@/lib/auth";
@@ -36,6 +37,7 @@ export default async function SiteHeader() {
         </Link>
 
         <nav className="flex items-center gap-1 sm:gap-3 text-sm">
+          <ToolsMenu />
           <Link
             href="/community"
             className="hidden sm:inline-flex rounded-lg px-3 py-2 font-medium hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
