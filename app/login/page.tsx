@@ -43,7 +43,7 @@ export default async function LoginPage({
         <GoogleLoginButton next={params.next} />
 
         <p className="mt-6 text-xs text-slate-500 dark:text-slate-500">
-          Visitors do not need an account to use the generator.
+          Site access is restricted to authorized administrators.
         </p>
       </div>
     </main>

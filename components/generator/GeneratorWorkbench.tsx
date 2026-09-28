@@ -669,7 +669,7 @@ export default function GeneratorWorkbench({
           <div>
             <h1 className="text-lg font-bold">AI Metadata Generator</h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              No account needed. Images stay in your browser.
+              Admin-only. Images are processed in memory and never stored.
             </p>
           </div>
 
