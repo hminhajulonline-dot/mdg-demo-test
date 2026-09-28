@@ -1,6 +1,13 @@
 import type { GeneratedMetadata } from "@/lib/types";
 import { resolveProvider, type ResolvedProvider } from "@/lib/ai/providers";
 import type { PromptOptions } from "@/lib/ai/prompts";
+import {
+  AI_CATEGORY_ID,
+  AI_DISCLOSURE,
+  endsWithAIDisclosure,
+  toCategoryIds,
+  toCategoryNames,
+} from "@/lib/csv/dreamstimeRules";
 
 const REQUEST_TIMEOUT_MS = 90_000;
 
@@ -38,7 +45,8 @@ export async function generateWithAi(
   }
 
   let rawText = "";
-  if (resolved.def.kind === "gemini") rawText = await callGemini(resolved, input);
+  if (resolved.def.kind === "gemini")
+    rawText = await callGemini(resolved, input, options.mode !== "img2prompt");
   else if (resolved.def.kind === "cloudflare") rawText = await callCloudflare(resolved, input);
   else rawText = await callOpenAICompatible(resolved, input);
 
@@ -145,8 +153,49 @@ async function callCloudflare(provider: ResolvedProvider, input: GenerateInput):
   }
 }
 
-async function callGemini(provider: ResolvedProvider, input: GenerateInput): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${provider.model}:generateContent?key=${encodeURIComponent(provider.apiKey)}`;
+/** CSV Tree's lite→full Gemini cascade (used when the preferred model fails). */
+const GEMINI_MODEL_CASCADE = [
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash",
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
+  "gemini-2.0-flash-lite",
+  "gemini-1.5-flash",
+];
+
+async function callGemini(
+  provider: ResolvedProvider,
+  input: GenerateInput,
+  jsonMode: boolean
+): Promise<string> {
+  const models = [
+    provider.model,
+    ...GEMINI_MODEL_CASCADE.filter((m) => m !== provider.model),
+  ];
+  let lastError: Error | null = null;
+  for (const model of models) {
+    try {
+      return await callGeminiModel(provider, input, model, jsonMode);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const msg = lastError.message;
+      // Quota/429 = key-level problem: stop and let the client rotate keys
+      // instead of burning the remaining models on a dead key.
+      if (/\(429\)|quota/i.test(msg)) throw lastError;
+      // Otherwise (model missing, 400s) try the next model in the cascade.
+    }
+  }
+  throw lastError ?? new Error("Gemini request failed.");
+}
+
+async function callGeminiModel(
+  provider: ResolvedProvider,
+  input: GenerateInput,
+  model: string,
+  jsonMode: boolean,
+  allowNoJsonMime = true
+): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(provider.apiKey)}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
@@ -163,12 +212,22 @@ async function callGemini(provider: ResolvedProvider, input: GenerateInput): Pro
             ],
           },
         ],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 1024 },
+        generationConfig: {
+          temperature: 0.4,
+          maxOutputTokens: jsonMode ? 2048 : 4096,
+          // Forces clean JSON out of Gemini for metadata mode.
+          ...(jsonMode ? { responseMimeType: "application/json" } : {}),
+        },
       }),
     });
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
+      // Some models reject responseMimeType - retry once without it.
+      if (res.status === 400 && jsonMode && allowNoJsonMime && /responseMimeType|response_mime_type/i.test(body)) {
+        clearTimeout(timer);
+        return callGeminiModel(provider, input, model, jsonMode, false);
+      }
       throw new Error(`AI request failed (${res.status}): ${truncate(body, 300)}`);
     }
     const json = await res.json();
@@ -365,11 +424,32 @@ export function enforceMetadata(
     baseModel = typeof meta.baseModel === "string" && meta.baseModel.trim() ? meta.baseModel.trim() : "leonardo";
   }
 
+  // Dreamstime categories: normalise whatever came back to canonical names
+  // (max 3), forcing the AI category when the visitor flagged the batch.
+  let categories: string[] | undefined;
+  if (o.platform === "dreamstime") {
+    let catIds = toCategoryIds(meta.categories);
+    if (o.isAIGenerated && !catIds.includes(AI_CATEGORY_ID)) {
+      catIds = [AI_CATEGORY_ID, ...catIds];
+    }
+    const names = toCategoryNames(catIds).slice(0, 3);
+    if (names.length) categories = names;
+  }
+
+  // Dreamstime AI disclosure must be the closing sentence - reserve room for
+  // it BEFORE the final truncation so it can never be the part cut off.
+  let finalDescription = truncateWordBoundary(description, 2000);
+  if (o.platform === "dreamstime" && o.isAIGenerated && !endsWithAIDisclosure(finalDescription)) {
+    const tail = ` ${AI_DISCLOSURE}`;
+    finalDescription = `${truncateWordBoundary(description, Math.max(0, 2000 - tail.length))}${tail}`.trim();
+  }
+
   return {
     title,
-    description: truncateWordBoundary(description, 2000),
+    description: finalDescription,
     keywords,
     category: category || undefined,
+    categories,
     prompt: freepikPrompt,
     baseModel,
   };

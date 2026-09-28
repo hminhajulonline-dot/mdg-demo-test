@@ -2,6 +2,42 @@
   "$schema": "Maintained by Plickify. Newest entries first. Fork users see this file's contents on the /updates page and via the nav bell.",
   "updates": [
     {
+      "version": "2.4.0",
+      "date": "2026-09-28",
+      "type": "feature",
+      "title": "Generator parity with CSV Tree - parallel queue, video frames, Ghostscript EPS",
+      "changes": [
+        "Generation now runs 3 files in parallel with per-key RPM pacing, live throughput/ETA stats, auto-retry (max 3 passes) and a manual Retry Failed button",
+        "Video uploads (MP4/MOV) supported - a frame at 10% of the clip is extracted and sent to the AI",
+        "Vector previews rebuilt: pdf.js -> TIFF (incl. JPEG-compressed) -> embedded JPEG -> Ghostscript WASM (~16 MB, loads once) so pure PostScript EPS/AI finally renders",
+        "Gemini now cascades lite->flash->pro when the preferred model fails and requests strict JSON output (bigger token budget)",
+        "Dreamstime: AI picks up to 3 Categories, CSV gains a Categories column, in-card rule warnings, and an 'AI-generated' toggle that enforces the disclosure sentence",
+        "Uploader warns with toasts when the batch is full; object URLs are revoked on clear"
+      ],
+      "bugfixes": [
+        "Provider fallback plan now covers OpenAI and Cerebras keys and uses cooldown keys as a last resort",
+        "Daily-quota errors park every key of that provider instead of retrying dead keys"
+      ],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
+      "version": "2.3.0",
+      "date": "2026-08-23",
+      "type": "feature",
+      "title": "Cleaner generator, actionable Usage page",
+      "changes": [
+        "Removed the 'Recent generations' strip from the generator for a cleaner workspace",
+        "Removed the AI Status admin page and its sidebar entries",
+        "Usage page rebuilt: all-time / 24h / 7-day failure stats and a richer request table"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
       "version": "2.2.3",
       "date": "2026-08-24",
       "type": "bugfix",

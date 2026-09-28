@@ -1,4 +1,8 @@
 import type { GeneratorSettings } from "@/lib/types";
+import {
+  AI_DISCLOSURE,
+  DREAMSTIME_CATEGORIES,
+} from "@/lib/csv/dreamstimeRules";
 
 /**
  * Merged generation options: admin defaults (generator_settings) overlaid
@@ -18,6 +22,8 @@ export interface PromptOptions {
   keywordsCountMax: number;
   includeCategory: boolean;
   categories: string[];
+  /** Dreamstime: visitor flagged the batch as AI-generated. */
+  isAIGenerated: boolean;
   language: string;
   singleWordKw: boolean;
   silhouette: boolean;
@@ -101,6 +107,9 @@ function buildMetadata(o: PromptOptions): string {
   if (o.includeCategory) {
     schema.push(`  ,"category": "one category exactly from this list: ${o.categories.join(" | ")}"`);
   }
+  if (o.platform === "dreamstime") {
+    schema.push('  ,"categories": ["category name", "category name", ...]');
+  }
   if (isFreepik) {
     schema.push('  ,"prompt": "single text-to-image prompt that could recreate this image, max 250 chars"');
     schema.push('  ,"baseModel": "leonardo"');
@@ -125,6 +134,13 @@ Requirements:
   }`;
 
   if (o.includeCategory) prompt += `\n- Category: choose EXACTLY one category from the provided list.`;
+  if (o.platform === "dreamstime") {
+    prompt += `\n- Dreamstime categories: pick up to 3 of [${DREAMSTIME_CATEGORIES.map((c) => c.name).join(", ")}] that best fit the image and return them as the "categories" array (names, not numbers).`;
+    if (o.isAIGenerated) {
+      prompt += `\n- This image IS AI-generated: finish the description with exactly "${AI_DISCLOSURE}" as its last sentence, and include the "Illustrations & Clipart / AI generated" category.`;
+    }
+    prompt += `\n- Avoid ALL CAPS, avoid a title identical to the description, and keep every keyword relevant to what is actually visible.`;
+  }
   prompt += vectorAwareness(o);
   prompt += accuracyRule();
   if (o.silhouette) prompt += "\n- If the image contains silhouettes, include silhouette-related keywords";
@@ -196,6 +212,7 @@ export function buildDefaultMetadataPrompt(s: GeneratorSettings, platform = "gen
     keywordsCountMax: s.keywords_count_max,
     includeCategory: s.include_category,
     categories: s.categories,
+    isAIGenerated: false,
     language: s.language,
     singleWordKw: false,
     silhouette: false,

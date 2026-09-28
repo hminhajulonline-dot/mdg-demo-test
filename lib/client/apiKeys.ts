@@ -221,24 +221,41 @@ export function buildAttemptPlan(selectedProvider?: string): AttemptPlanEntry[] 
   const store = readRawStore();
 
   const plan: AttemptPlanEntry[] = [];
-  const pushProvider = (id: string) => {
+  const push = (id: string, eligible: boolean) => {
     for (const k of store[id] || []) {
-      if (isKeyEligible(k)) plan.push({ providerId: id, keyValue: deobfuscate(k.value) });
+      if (isKeyEligible(k) === eligible) {
+        plan.push({ providerId: id, keyValue: deobfuscate(k.value) });
+      }
     }
   };
 
-  pushProvider(selected);
-  if (fallbackOn) {
-    // Import lazily to avoid a client bundle cycle in edge tooling.
-    const order = [
-      "groq", "gemini", "openrouter", "mistral", "cohere", "sambanova",
-      "nvidia", "cloudflare", "github", "together", "deepinfra",
-    ];
-    for (const id of order) {
-      if (id !== selected) pushProvider(id);
-    }
-  }
+  // Fallback order: vision-capable providers first, text-only last.
+  const order = [
+    "groq", "gemini", "openai", "openrouter", "mistral", "cohere",
+    "sambanova", "nvidia", "cloudflare", "github", "together", "deepinfra",
+    "cerebras",
+  ];
+  const chain = fallbackOn ? [selected, ...order.filter((id) => id !== selected)] : [selected];
+
+  // 1) healthy keys first, 2) cooldown keys as a last resort (CSV Tree
+  // behaviour - an empty plan would silently fall to the server key).
+  for (const id of chain) push(id, true);
+  for (const id of chain) push(id, false);
   return plan;
+}
+
+/** Daily quota trips - park EVERY key of the provider at once. */
+export function markAllProviderKeysUnhealthy(providerId: string, cooldownMs?: number) {
+  const store = readRawStore();
+  const list = store[providerId] || [];
+  const cd = Math.min(MAX_REHAB_MS, Math.max(QUOTA_REHAB_MS, cooldownMs ?? QUOTA_REHAB_MS));
+  list.forEach((k) => {
+    k.health = "unhealthy";
+    k.lastFailedAt = Date.now();
+    k.cooldownMs = cd;
+  });
+  store[providerId] = list;
+  writeRawStore(store);
 }
 
 /** Mark a failed attempt so the key sits out for a while. */

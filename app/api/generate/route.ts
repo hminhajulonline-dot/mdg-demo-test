@@ -83,6 +83,7 @@ function buildOptions(body: Record<string, unknown>, s: Awaited<ReturnType<typeo
     keywordsCountMax: kwMax,
     includeCategory: s.include_category,
     categories: s.categories,
+    isAIGenerated: clampBool(u.isAIGenerated),
     language: s.language,
     singleWordKw: clampBool(u.singleWordKw),
     silhouette: clampBool(u.silhouette),

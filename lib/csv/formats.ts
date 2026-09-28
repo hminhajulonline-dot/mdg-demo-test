@@ -4,6 +4,8 @@
  * platform's official upload-metadata template.
  */
 
+import { toCategoryNames } from "@/lib/csv/dreamstimeRules";
+
 export interface PlatformFormat {
   id: string;
   name: string;
@@ -18,6 +20,7 @@ export type CsvField =
   | "title"
   | "description"
   | "keywords"
+  | "categories"
   | "prompt"
   | "baseModel";
 
@@ -73,10 +76,10 @@ export const PLATFORMS: PlatformFormat[] = [
   {
     id: "dreamstime",
     name: "Dreamstime",
-    description: "Standard 4-column metadata.",
-    headers: ["Filename", "Title", "Description", "Keywords"],
+    description: "Standard 4-column metadata plus the up-to-3 Dreamstime categories.",
+    headers: ["Filename", "Title", "Description", "Keywords", "Categories"],
     separator: ",",
-    fields: ["filename", "title", "description", "keywords"],
+    fields: ["filename", "title", "description", "keywords", "categories"],
   },
   {
     id: "depositphotos",
@@ -106,6 +109,7 @@ export function getPlatform(id: string): PlatformFormat {
  *   Adobe Stock     -> title, keywords
  *   Shutterstock    -> description, keywords
  *   Magnific        -> title, keywords, prompt, baseModel
+ *   Dreamstime      -> title, description, keywords, categories
  *   General / etc.  -> title, description, keywords
  */
 export function getCardFields(platformId: string): CsvField[] {
@@ -117,6 +121,7 @@ export const CARD_FIELD_LABELS: Record<string, string> = {
   title: "Title",
   description: "Description",
   keywords: "Keywords",
+  categories: "Categories",
   prompt: "Prompt",
   baseModel: "Base-Model",
 };
@@ -127,6 +132,7 @@ export interface CsvRow {
   description?: string;
   keywords?: string[];
   category?: string;
+  categories?: string[];
   prompt?: string;
   baseModel?: string;
 }
@@ -154,6 +160,8 @@ function valueFor(field: CsvField, row: CsvRow, exportExt: string): string {
       return row.description || "";
     case "keywords":
       return Array.isArray(row.keywords) ? row.keywords.join(",") : row.keywords || "";
+    case "categories":
+      return toCategoryNames(row.categories).slice(0, 3).join(", ");
     case "prompt":
       return row.prompt || "";
     case "baseModel":
@@ -202,6 +210,7 @@ export function buildJSON(rows: CsvRow[]): string {
       description: row.description,
       keywords: Array.isArray(row.keywords) ? row.keywords.join(", ") : row.keywords,
       ...(row.category ? { category: row.category } : {}),
+      ...(row.categories?.length ? { categories: row.categories.join(", ") } : {}),
       ...(row.prompt ? { prompt: row.prompt } : {}),
       ...(row.baseModel ? { baseModel: row.baseModel } : {}),
     })),
@@ -219,6 +228,7 @@ export function buildTXT(rows: CsvRow[]): string {
         `Description: ${row.description}`,
         `Keywords: ${Array.isArray(row.keywords) ? row.keywords.join(", ") : row.keywords}`,
         row.category ? `Category: ${row.category}` : "",
+        row.categories?.length ? `Categories: ${row.categories.join(", ")}` : "",
         row.prompt ? `Prompt: ${row.prompt}` : "",
       ]
         .filter(Boolean)

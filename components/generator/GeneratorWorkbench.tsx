@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import Dropzone from "@/components/generator/Dropzone";
-import ResultCard, { type CardItem } from "@/components/generator/ResultCard";
+import ResultCard, { formatFileSize, type CardItem } from "@/components/generator/ResultCard";
 import ControlsPanel from "@/components/generator/ControlsPanel";
 import ApiKeysModal from "@/components/generator/ApiKeysModal";
 import SuccessModal from "@/components/generator/SuccessModal";
 import FallbackToast from "@/components/generator/FallbackToast";
-import { prepareImage } from "@/lib/client/image";
+import { prepareImage, prepareVideoFrame } from "@/lib/client/image";
 import { detectVector, prepareSvg, preparePostScript } from "@/lib/client/vector";
 import { addToHistory } from "@/lib/client/history";
 import {
@@ -26,6 +26,7 @@ import {
   buildAttemptPlan,
   markKeyUsed,
   markKeyUnhealthy,
+  markAllProviderKeysUnhealthy,
   rpmWaitMs,
   isQuotaError,
   getSelectedProvider,
@@ -37,18 +38,29 @@ import { buildCSV, buildPromptTxt, buildPromptCsv, type CsvRow } from "@/lib/csv
 import type { GeneratorSettings, GeneratorUserSettings, GeneratedMetadata } from "@/lib/types";
 
 const RASTER_MIME = ["image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp"];
+const VIDEO_MIME = ["video/mp4", "video/quicktime", "video/webm", "video/x-m4v"];
+const VIDEO_EXT = ["mp4", "mov", "m4v", "webm"];
 const VECTOR_EXT = ["svg", "ai", "eps", "pdf"];
 const EXPORT_EXTS = ["", "eps", "ai", "svg", "jpg", "jpeg", "png", "psd"];
 
+/** Parallel generation workers (CSV Tree runs ~3 concurrent items). */
+const QUEUE_CONCURRENCY = 3;
+/** Total passes per item: 1 initial + up to 2 auto-retries (CSV Tree MAX_PASSES). */
+const MAX_PASSES = 3;
+
 function isAccepted(file: File): boolean {
   if (RASTER_MIME.includes(file.type)) return true;
+  if (VIDEO_MIME.includes(file.type)) return true;
   const name = file.name.toLowerCase();
+  if (VIDEO_EXT.some((ext) => name.endsWith(`.${ext}`))) return true;
   return VECTOR_EXT.some((ext) => name.endsWith(`.${ext}`));
 }
 
-function isPostscript(file: File): boolean {
+
+function isVideoFile(file: File): boolean {
+  if (VIDEO_MIME.includes(file.type)) return true;
   const name = file.name.toLowerCase();
-  return [".ai", ".eps", ".pdf"].some((ext) => name.endsWith(ext));
+  return VIDEO_EXT.some((ext) => name.endsWith(`.${ext}`));
 }
 
 /** Module-scope clock read (keeps component render pure). */
@@ -64,12 +76,64 @@ function providerDisplayName(id: string): string {
   return PROVIDERS.find((p) => p.id === id)?.name ?? id;
 }
 
+/**
+ * Rasterizes a vector file in the background right after upload so the card
+ * shows artwork immediately instead of waiting for generation. Failures leave
+ * the placeholder tile - generation will retry rasterization itself.
+ */
+function warmVectorPreview(
+  setItems: (updater: (prev: WorkItem[]) => WorkItem[]) => void,
+  id: string,
+  fileUrl: string,
+  filename: string
+) {
+  void (async () => {
+    try {
+      const kind = detectVector(filename);
+      if (!kind) return;
+      const blob = await fetch(fileUrl).then((r) => r.blob());
+      let prep;
+      if (kind === "svg") {
+        prep = await prepareSvg(new File([blob], filename, { type: "image/svg+xml" }));
+      } else {
+        const lower = filename.toLowerCase();
+        const ext = lower.endsWith(".eps") ? "eps" : lower.endsWith(".pdf") ? "pdf" : "ai";
+        prep = await preparePostScript(
+          new File([blob], filename, { type: "application/postscript" }),
+          ext
+        );
+      }
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === id && !it.prepBase64
+            ? {
+                ...it,
+                previewUrl: `data:image/jpeg;base64,${prep.base64}`,
+                prepBase64: prep.base64,
+                prepMime: prep.mimeType,
+              }
+            : it
+        )
+      );
+    } catch {
+      // Keep the placeholder; callGenerate will attempt rasterization again.
+    }
+  })();
+}
+
 interface WorkItem extends CardItem {
   previewUrl: string;
   /** Object URL of the ORIGINAL file - the raster/parse data source. */
   fileUrl: string;
   /** Original file type from disk (before canvas compression). */
   fileType: string;
+  /** Original file size in bytes (shown on the card). */
+  fileSize: number;
+  /** Is this a video file (preview shows <video>, AI gets a frame). */
+  isVideo?: boolean;
+  /** Cached vector rasterization from the upload-time preview pass. */
+  prepBase64?: string;
+  prepMime?: string;
 }
 
 interface Stats {
@@ -104,18 +168,24 @@ export default function GeneratorWorkbench({
   const [fallbackMsg, setFallbackMsg] = useState<string | null>(null);
   const [stats, setStats] = useState<Stats>({ done: 0, total: 0, success: 0, failed: 0 });
   const [etaSec, setEtaSec] = useState(0);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const idCounter = useRef(0);
   const abortRef = useRef({ aborted: false });
-  const retriedRef = useRef<Set<string>>(new Set());
+  /** Failed-pass count per item id (drives the 3-pass auto-retry). */
+  const retryCountRef = useRef<Map<string, number>>(new Map());
   const batchStartRef = useRef(0);
 
-  // Live ETA ticker while a batch runs.
+  // Live ETA + elapsed ticker while a batch runs.
   useEffect(() => {
     if (!running) return;
     const tick = () => {
-      if (batchStartRef.current && stats.done > 0 && stats.total > stats.done) {
-        const perDoneMs = (nowMs() - batchStartRef.current) / stats.done;
-        setEtaSec(Math.round((perDoneMs / 1000) * (stats.total - stats.done)));
+      if (batchStartRef.current) {
+        const elapsedMs = nowMs() - batchStartRef.current;
+        setElapsedSec(Math.round(elapsedMs / 1000));
+        if (stats.done > 0 && stats.total > stats.done) {
+          const perDoneMs = elapsedMs / stats.done;
+          setEtaSec(Math.round((perDoneMs / 1000) * (stats.total - stats.done)));
+        }
       }
     };
     const t = setInterval(tick, 1000);
@@ -145,6 +215,8 @@ export default function GeneratorWorkbench({
   }
 
   const doneItems = useMemo(() => items.filter((i) => i.status === "done"), [items]);
+  const totalBytes = useMemo(() => items.reduce((a, i) => a + (i.fileSize || 0), 0), [items]);
+  const errorCount = useMemo(() => items.filter((i) => i.status === "error").length, [items]);
   const canExport =
     doneItems.length > 0 || items.some((i) => i.mode === "img2prompt" && i.promptText);
 
@@ -154,39 +226,57 @@ export default function GeneratorWorkbench({
 
   const addFiles = useCallback(
     (files: File[]) => {
-      setItems((prev) => {
-        const capacity = settings.max_images_per_batch - prev.length;
-        if (capacity <= 0) return prev;
-        const accepted = files
-          .filter((f) => isAccepted(f))
-          .slice(0, capacity);
-        const mode = getUserSettings().mode;
-        return [
-          ...prev,
-          ...accepted.map((file) => {
-            const fileUrl = URL.createObjectURL(file);
-            const postscript = isPostscript(file);
-            return {
-              id: `img_${nowMs()}_${idCounter.current++}`,
-              filename: file.name,
-              mode,
-              status: "pending" as const,
-              title: "",
-              description: "",
-              keywords: [],
-              category: "",
-              promptText: undefined,
-              // AI/EPS/PDF have no native browser preview - placeholder tile.
-              previewUrl: postscript ? "" : fileUrl,
-              // Always keep the original bytes reachable for processing.
-              fileUrl,
-              fileType: file.type || file.name.slice(file.name.lastIndexOf(".") + 1),
-            };
-          }),
-        ];
+      const mode = getUserSettings().mode;
+      const supported = files.filter((f) => isAccepted(f));
+      const rejected = files.length - supported.length;
+      const capacity = settings.max_images_per_batch - items.length;
+      const slice = supported.slice(0, Math.max(0, capacity));
+      const overflow = supported.length - slice.length;
+
+      // CSV Tree toasts on every intake failure instead of silently dropping.
+      if (rejected > 0 || overflow > 0) {
+        const parts: string[] = [];
+        if (rejected > 0)
+          parts.push(`${rejected} unsupported file${rejected > 1 ? "s" : ""} skipped`);
+        if (overflow > 0)
+          parts.push(
+            `Batch limit reached (${settings.max_images_per_batch}) - ${overflow} not added`
+          );
+        setFallbackMsg(parts.join(" - "));
+      }
+      if (slice.length === 0) return;
+
+      const built: WorkItem[] = slice.map((file) => {
+        const fileUrl = URL.createObjectURL(file);
+        const vector = detectVector(file.name) !== null;
+        return {
+          id: `img_${nowMs()}_${idCounter.current++}`,
+          filename: file.name,
+          mode,
+          status: "pending" as const,
+          title: "",
+          description: "",
+          keywords: [],
+          category: "",
+          promptText: undefined,
+          // Vectors have no native browser preview - placeholder tile while
+          // warmVectorPreview rasterizes them in the background.
+          previewUrl: vector ? "" : fileUrl,
+          fileUrl,
+          fileType: file.type || file.name.slice(file.name.lastIndexOf(".") + 1),
+          fileSize: file.size,
+          isVideo: isVideoFile(file) || undefined,
+        };
       });
+
+      setItems((prev) => [...prev, ...built]);
+
+      // Instant vector previews: rasterize right after upload.
+      for (const it of built) {
+        if (!it.previewUrl) warmVectorPreview(setItems, it.id, it.fileUrl, it.filename);
+      }
     },
-    [settings.max_images_per_batch]
+    [items.length, settings.max_images_per_batch]
   );
 
   function updateItem(id: string, patch: Partial<WorkItem>) {
@@ -203,10 +293,16 @@ export default function GeneratorWorkbench({
 
   function clearAll() {
     if (running) return;
+    // Release object URLs so large batches don't pin memory.
+    for (const it of items) {
+      try {
+        URL.revokeObjectURL(it.fileUrl);
+      } catch {}
+    }
     setItems([]);
     setStats({ done: 0, total: 0, success: 0, failed: 0 });
     setShowSuccess(false);
-    retriedRef.current.clear();
+    retryCountRef.current.clear();
   }
 
   /* ---------------------------------------------------------------- */
@@ -216,11 +312,18 @@ export default function GeneratorWorkbench({
   async function callGenerate(item: WorkItem): Promise<void> {
     updateItem(item.id, { status: "processing", error: undefined });
 
-    // Vectors (SVG/AI/EPS/PDF) are rasterized locally; rasters downscaled.
-    // The rendered artwork becomes the card preview immediately.
+    // Vectors (SVG/AI/EPS/PDF) are rasterized locally; rasters downscaled;
+    // videos reduced to a representative frame. The rendered artwork becomes
+    // the card preview immediately.
     let prepared;
     const vectorKind = detectVector(item.filename);
-    if (vectorKind === "postscript") {
+    if (item.prepBase64) {
+      // Upload-time preview pass already rasterized this vector - reuse it.
+      prepared = { base64: item.prepBase64, mimeType: item.prepMime || "image/jpeg" };
+      updateItem(item.id, {
+        previewUrl: `data:image/jpeg;base64,${prepared.base64}`,
+      });
+    } else if (vectorKind === "postscript") {
       const blob = await fetch(item.fileUrl).then((r) => r.blob());
       const ext = item.filename.toLowerCase().endsWith(".eps")
         ? "eps"
@@ -242,6 +345,11 @@ export default function GeneratorWorkbench({
       updateItem(item.id, {
         previewUrl: `data:image/jpeg;base64,${prepared.base64}`,
       });
+    } else if (item.isVideo) {
+      const blob = await fetch(item.fileUrl).then((r) => r.blob());
+      prepared = await prepareVideoFrame(
+        new File([blob], item.filename, { type: blob.type || "video/mp4" })
+      );
     } else {
       const blob = await fetch(item.fileUrl).then((r) => r.blob());
       prepared = await prepareImage(
@@ -321,6 +429,7 @@ export default function GeneratorWorkbench({
             description: meta.description ?? "",
             keywords: Array.isArray(meta.keywords) ? meta.keywords : [],
             category: meta.category ?? "",
+            categories: meta.categories,
             prompt: meta.prompt,
             baseModel: meta.baseModel,
           });
@@ -347,11 +456,16 @@ export default function GeneratorWorkbench({
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err);
         if (attempt) {
-          markKeyUnhealthy(
-            attempt.providerId,
-            attempt.keyValue,
-            isQuotaError(lastError) ? QUOTA_REHAB_MS : undefined
-          );
+          if (isQuotaError(lastError) && /day|daily|per.?day/i.test(lastError)) {
+            // Daily quota - every key of this provider is dead until rehab.
+            markAllProviderKeysUnhealthy(attempt.providerId);
+          } else {
+            markKeyUnhealthy(
+              attempt.providerId,
+              attempt.keyValue,
+              isQuotaError(lastError) ? QUOTA_REHAB_MS : undefined
+            );
+          }
           const nextName = queue[i + 1]
             ? providerDisplayName(queue[i + 1]!.providerId)
             : null;
@@ -370,51 +484,78 @@ export default function GeneratorWorkbench({
   async function runQueue(pendingIds: string[]) {
     abortRef.current.aborted = false;
     setRunning(true);
-    let success = stats.success;
-    let failed = stats.failed;
 
-    for (let n = 0; n < pendingIds.length; n++) {
-      if (abortRef.current.aborted) break;
-      const id = pendingIds[n];
-      const item = await new Promise<WorkItem | undefined>((resolve) =>
-        setItems((prev) => {
-          resolve(prev.find((i) => i.id === id));
-          return prev;
-        })
-      );
-      if (!item) continue;
-      try {
-        await callGenerate(item);
-        success++;
-      } catch (err) {
-        failed++;
-        updateItem(id, {
-          status: "error",
-          error: err instanceof Error ? err.message : "Generation failed.",
-        });
+    // Parallel worker pool - ~3x faster than sequential batches.
+    const ids = [...pendingIds];
+    const failedIds: string[] = [];
+    let cursor = 0;
+    let anySuccess = false;
+
+    async function worker() {
+      while (cursor < ids.length && !abortRef.current.aborted) {
+        const id = ids[cursor++];
+        const item = await new Promise<WorkItem | undefined>((resolve) =>
+          setItems((prev) => {
+            resolve(prev.find((i) => i.id === id));
+            return prev;
+          })
+        );
+        if (!item) continue;
+        let ok = false;
+        try {
+          await callGenerate(item);
+          ok = true;
+          anySuccess = true;
+        } catch (err) {
+          failedIds.push(id);
+          retryCountRef.current.set(id, (retryCountRef.current.get(id) ?? 0) + 1);
+          updateItem(id, {
+            status: "error",
+            error: err instanceof Error ? err.message : "Generation failed.",
+          });
+        }
+        // Closure-free counters: increment the bucket against live state so
+        // parallel workers (and retries) never double-count.
+        setStats((s) => ({
+          ...s,
+          done: s.done + 1,
+          success: s.success + (ok ? 1 : 0),
+          failed: s.failed + (ok ? 0 : 1),
+        }));
       }
-      setStats((s) => ({ ...s, done: s.done + 1, success, failed }));
     }
 
-    // Auto-retry failed items once (CSV Tree behaviour).
+    const workerCount = Math.min(QUEUE_CONCURRENCY, ids.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+    // Auto-retry failed items up to MAX_PASSES total passes (CSV Tree).
     if (!abortRef.current.aborted) {
-      const failedNow = items.filter(
-        (i) => i.status === "error" && !retriedRef.current.has(i.id)
+      const failedNow = failedIds.filter(
+        (id) => (retryCountRef.current.get(id) ?? 0) < MAX_PASSES
       );
-      for (const f of failedNow) retriedRef.current.add(f.id);
       if (failedNow.length > 0) {
+        setFallbackMsg(
+          `Retrying ${failedNow.length} failed file${failedNow.length > 1 ? "s" : ""} (attempt ${
+            Math.min(...failedNow.map((id) => retryCountRef.current.get(id) ?? 1) ) + 1
+          }/${MAX_PASSES})...`
+        );
         for (const f of failedNow) {
-          updateItem(f.id, { status: "pending", error: undefined });
-          setStats((s) => ({ ...s, done: Math.max(0, s.done - 1) }));
+          updateItem(f, { status: "pending", error: undefined });
+          // Return the failed item to "not done yet" before the retry pass.
+          setStats((s) => ({
+            ...s,
+            done: Math.max(0, s.done - 1),
+            failed: Math.max(0, s.failed - 1),
+          }));
         }
         setRunning(false);
-        setTimeout(() => void runQueue(failedNow.map((f) => f.id)), 500);
+        setTimeout(() => void runQueue(failedNow), 500);
         return;
       }
     }
 
     setRunning(false);
-    if (!abortRef.current.aborted && success > 0) {
+    if (!abortRef.current.aborted && anySuccess) {
       setShowSuccess(true);
     }
   }
@@ -424,6 +565,8 @@ export default function GeneratorWorkbench({
     const pending = items.filter((i) => i.status === "pending");
     if (pending.length === 0) return;
     batchStartRef.current = nowMs();
+    setEtaSec(0);
+    setElapsedSec(0);
     setStats({ done: 0, total: pending.length, success: 0, failed: 0 });
     setShowSuccess(false);
     void runQueue(pending.map((i) => i.id));
@@ -440,6 +583,21 @@ export default function GeneratorWorkbench({
 
   function stop() {
     abortRef.current.aborted = true;
+    setFallbackMsg("Stopped. Partial results kept.");
+  }
+
+  /** Manual bulk retry of every failed card (independent of auto-retry). */
+  function retryFailed() {
+    if (running) return;
+    const failed = items.filter((i) => i.status === "error");
+    if (failed.length === 0) return;
+    for (const f of failed) updateItem(f.id, { status: "pending", error: undefined });
+    batchStartRef.current = nowMs();
+    setEtaSec(0);
+    setElapsedSec(0);
+    setStats({ done: 0, total: failed.length, success: 0, failed: 0 });
+    setShowSuccess(false);
+    void runQueue(failed.map((f) => f.id));
   }
 
   /* ---------------------------------------------------------------- */
@@ -458,6 +616,7 @@ export default function GeneratorWorkbench({
       description: i.description,
       keywords: i.keywords,
       category: i.category || "",
+      categories: i.categories,
       prompt: i.prompt,
       baseModel: i.baseModel,
     }));
@@ -556,6 +715,14 @@ export default function GeneratorWorkbench({
                 Stop
               </button>
             ) : null}
+            {!running && errorCount > 0 ? (
+              <button
+                onClick={retryFailed}
+                className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+              >
+                Retry Failed ({errorCount})
+              </button>
+            ) : null}
             <button
               onClick={clearAll}
               disabled={running || items.length === 0}
@@ -563,9 +730,16 @@ export default function GeneratorWorkbench({
             >
               Clear All
             </button>
-            {running && etaSec > 0 ? (
+            {items.length > 0 ? (
+              <span className="text-xs font-medium text-slate-400">
+                Total: {formatFileSize(totalBytes)}
+              </span>
+            ) : null}
+            {running ? (
               <span className="ml-auto text-xs font-medium text-slate-500 tabular-nums">
-                ~{etaSec}s remaining
+                {stats.done}/{stats.total} done · {elapsedSec}s elapsed
+                {stats.done > 0 ? ` · ${(elapsedSec / stats.done).toFixed(1)}s/file` : ""}
+                {etaSec > 0 ? ` · ~${etaSec}s left` : ""}
               </span>
             ) : null}
             {!running && stats.total > 0 ? (
@@ -594,6 +768,7 @@ export default function GeneratorWorkbench({
                   key={item.id}
                   item={item}
                   platform={platform}
+                  isAIGenerated={user.isAIGenerated}
                   onUpdate={(patch) => updateItem(item.id, patch)}
                   onRegenerate={() => regenerate(item.id)}
                   onRemove={() => removeItem(item.id)}

@@ -1,6 +1,7 @@
 "use client";
 
 import type { GeneratorUserSettings } from "@/lib/types";
+import { AI_DISCLOSURE } from "@/lib/csv/dreamstimeRules";
 
 export const PLATFORM_TILES = [
   { id: "adobestock", name: "Adobe Stock", short: "St" },
@@ -158,6 +159,22 @@ export default function ControlsPanel({ settings, update, platform, setPlatform 
               </div>
 
               <OptionalBlock settings={settings} update={update} />
+
+              {platform === "dreamstime" ? (
+                <div className="pt-3 border-t border-slate-200 dark:border-slate-700 space-y-1">
+                  <SectionLabel>Dreamstime rules</SectionLabel>
+                  <Toggle
+                    label="This is AI-generated"
+                    checked={settings.isAIGenerated}
+                    onChange={(v) => update("isAIGenerated", v)}
+                  />
+                  <p className="text-[10px] text-slate-400 leading-snug">
+                    {settings.isAIGenerated
+                      ? `Categories are detected automatically, "Illustrations & Clipart / AI generated" is added for you, and every description ends with "${AI_DISCLOSURE}".`
+                      : "Categories are detected automatically from the image (max 3)."}
+                  </p>
+                </div>
+              ) : null}
             </>
           ) : (
             <>
