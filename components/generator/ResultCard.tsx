@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { getCardFields } from "@/lib/csv/formats";
+import { CARD_FIELD_LABELS, getCardFields, getPlatform } from "@/lib/csv/formats";
 import { validateDreamstime } from "@/lib/csv/dreamstimeRules";
-import type { GenerationMode } from "@/lib/types";
+import type { GenerationMode, ResultBounds } from "@/lib/types";
 
 export async function copyText(text: string): Promise<boolean> {
   try {
@@ -36,6 +36,10 @@ export interface CardItem {
   previewUrl?: string;
   /** Original file size in bytes. */
   fileSize?: number;
+  /** Bytes after in-browser compression (shown as "2.5 MB → 512 KB"). */
+  compressedSize?: number;
+  /** Bounds reported by the generator - drives the green/amber badges. */
+  bounds?: ResultBounds;
   /** Video file - preview plays inline instead of an <img>. */
   isVideo?: boolean;
   // metadata result
@@ -109,6 +113,21 @@ export default function ResultCard({ item, platform, isAIGenerated, onUpdate, on
 
   const busy = item.status === "processing" || item.status === "pending";
 
+  // Current values + configured bounds -> green/amber badge state. Computed
+  // from the live text so edits re-evaluate immediately (CSV Tree parity).
+  const tb = item.bounds?.title;
+  const tLen = item.title.length;
+  const tOk = !tb || (tLen >= tb.min && tLen <= tb.max);
+  const kb = item.bounds?.keywords;
+  const kCount = item.keywords.length;
+  const kOk = !kb || (kCount >= kb.min && kCount <= kb.max);
+  const db = item.bounds?.description;
+  const dLen = item.description.length;
+  const dOk = !db || (dLen >= db.min && dLen <= db.max);
+  const pb = item.bounds?.prompt;
+  const pLen = (item.promptText || "").length;
+  const pOk = !pb || (pLen >= pb.min && pLen <= pb.max);
+
   return (
     <div className="group rounded-2xl border border-slate-200 dark:border-slate-800 bg-surface dark:bg-surface shadow-sm hover:shadow-md hover:border-brand/40 transition-all overflow-hidden">
       {/* Header strip */}
@@ -119,7 +138,15 @@ export default function ResultCard({ item, platform, isAIGenerated, onUpdate, on
           </p>
           {item.fileSize ? (
             <span className="shrink-0 rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-500 tabular-nums">
-              {formatFileSize(item.fileSize)}
+              Size: {formatFileSize(item.fileSize)}
+              {item.compressedSize && item.compressedSize !== item.fileSize ? (
+                <>
+                  {" → "}
+                  <span className="text-green-600 dark:text-green-400 font-semibold">
+                    {formatFileSize(item.compressedSize)}
+                  </span>
+                </>
+              ) : null}
             </span>
           ) : null}
         </div>
@@ -197,53 +224,87 @@ export default function ResultCard({ item, platform, isAIGenerated, onUpdate, on
           {/* RIGHT HALF - data */}
           <div className="px-4 sm:px-5 py-4 space-y-3">
             {item.mode === "img2prompt" ? (
-              <Field
-                label={`Prompt (${(item.promptText || "").length} chars)`}
-                value={item.promptText || ""}
-                rows={8}
-                disabled={busy}
-                onChange={(v) => onUpdate({ promptText: v })}
-                onCopy={() => doCopy("prompt", item.promptText || "")}
-                copied={copied === "prompt"}
-              />
+              <div>
+                <Field
+                  label={`Creative Prompt (${pLen} chars)`}
+                  value={item.promptText || ""}
+                  rows={8}
+                  disabled={busy}
+                  onChange={(v) => onUpdate({ promptText: v })}
+                  onCopy={() => doCopy("prompt", item.promptText || "")}
+                  copied={copied === "prompt"}
+                />
+                {pb ? (
+                  <BoundsBadge current={pLen} unit="chars" min={pb.min} max={pb.max} ok={pOk} />
+                ) : null}
+              </div>
             ) : (
               <>
+                {item.status === "done" ? (
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 mb-2 flex items-center gap-1.5">
+                    <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold uppercase tracking-wider">
+                      {getPlatform(platform).name}
+                    </span>
+                    <span className="truncate">
+                      format · {fields.map((f) => CARD_FIELD_LABELS[f] || f).join(" · ")}
+                    </span>
+                  </p>
+                ) : null}
                 {showTitle ? (
-                  <Field
-                    label={`Title · ${item.title.length}/${platform === "freepik" ? 250 : 100}`}
-                    value={item.title}
-                    rows={2}
-                    disabled={busy}
-                    onChange={(v) => onUpdate({ title: v })}
-                    onCopy={() => doCopy("title", item.title)}
-                    copied={copied === "title"}
-                  />
+                  <div>
+                    <Field
+                      label={
+                        tb
+                          ? `Title (${tLen} chars)`
+                          : `Title · ${tLen}/${platform === "freepik" ? 250 : 100}`
+                      }
+                      value={item.title}
+                      rows={2}
+                      disabled={busy}
+                      onChange={(v) => onUpdate({ title: v })}
+                      onCopy={() => doCopy("title", item.title)}
+                      copied={copied === "title"}
+                    />
+                    {tb ? (
+                      <BoundsBadge current={tLen} unit="chars" min={tb.min} max={tb.max} ok={tOk} />
+                    ) : null}
+                  </div>
                 ) : null}
                 {showDescription ? (
-                  <Field
-                    label="Description"
-                    value={item.description}
-                    rows={3}
-                    disabled={busy}
-                    onChange={(v) => onUpdate({ description: v })}
-                    onCopy={() => doCopy("description", item.description)}
-                    copied={copied === "description"}
-                  />
+                  <div>
+                    <Field
+                      label={db ? `Description (${dLen} chars)` : "Description"}
+                      value={item.description}
+                      rows={3}
+                      disabled={busy}
+                      onChange={(v) => onUpdate({ description: v })}
+                      onCopy={() => doCopy("description", item.description)}
+                      copied={copied === "description"}
+                    />
+                    {db ? (
+                      <BoundsBadge current={dLen} unit="chars" min={db.min} max={db.max} ok={dOk} />
+                    ) : null}
+                  </div>
                 ) : null}
                 {showKeywords ? (
-                  <Field
-                    label={`Keywords · ${item.keywords.length}`}
-                    value={item.keywords.join(", ")}
-                    rows={3}
-                    disabled={busy}
-                    onChange={(v) =>
-                      onUpdate({
-                        keywords: v.split(",").map((k) => k.trim()).filter(Boolean),
-                      })
-                    }
-                    onCopy={() => doCopy("keywords", item.keywords.join(", "))}
-                    copied={copied === "keywords"}
-                  />
+                  <div>
+                    <Field
+                      label={kb ? `Keywords (${kCount})` : `Keywords · ${kCount}`}
+                      value={item.keywords.join(", ")}
+                      rows={3}
+                      disabled={busy}
+                      onChange={(v) =>
+                        onUpdate({
+                          keywords: v.split(",").map((k) => k.trim()).filter(Boolean),
+                        })
+                      }
+                      onCopy={() => doCopy("keywords", item.keywords.join(", "))}
+                      copied={copied === "keywords"}
+                    />
+                    {kb ? (
+                      <BoundsBadge current={kCount} unit="keywords" min={kb.min} max={kb.max} ok={kOk} />
+                    ) : null}
+                  </div>
                 ) : null}
                 {showCategory ? (
                   <Field
@@ -360,6 +421,41 @@ function DreamstimeChecks({
           {c.msg}
         </p>
       ))}
+    </div>
+  );
+}
+
+function BoundsBadge({
+  current,
+  unit,
+  min,
+  max,
+  ok,
+}: {
+  current: number;
+  unit: string;
+  min: number;
+  max: number;
+  ok: boolean;
+}) {
+  const hasBounds = Number.isFinite(min) && Number.isFinite(max);
+  return (
+    <div className="flex flex-wrap items-center gap-2 mt-1.5 -mb-1 text-[10px]">
+      <span
+        className={`px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
+          ok
+            ? "bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300"
+            : "bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300"
+        }`}
+      >
+        {current} {unit}
+      </span>
+      {hasBounds && (
+        <span className="text-slate-500 dark:text-slate-400">
+          target {min}–{max}
+          {!ok && current < min && " · LLM under-delivered"}
+        </span>
+      )}
     </div>
   );
 }

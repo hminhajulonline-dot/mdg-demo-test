@@ -24,6 +24,7 @@ interface Props {
 
 export default function ControlsPanel({ settings, update, platform, setPlatform }: Props) {
   const isMetadata = settings.mode === "metadata";
+  const isDream = platform === "dreamstime";
 
   return (
     <div className="space-y-4">
@@ -86,7 +87,7 @@ export default function ControlsPanel({ settings, update, platform, setPlatform 
 
               <RangeSlider
                 label="Title length"
-                min={20}
+                min={5}
                 max={250}
                 step={5}
                 valueMin={settings.titleLengthMin}
@@ -94,22 +95,41 @@ export default function ControlsPanel({ settings, update, platform, setPlatform 
                 onChangeMin={(v) => update("titleLengthMin", Math.min(v, settings.titleLengthMax - 5))}
                 onChangeMax={(v) => update("titleLengthMax", Math.max(v, settings.titleLengthMin + 5))}
                 suffix="chars"
-                hint="Title length is enforced - longer responses are truncated at a word boundary."
+                hint="Title length is enforced — longer responses are truncated at a word boundary."
               />
 
-              <FixedRow label="Description" value="Admin-configured length" />
+              <RangeSlider
+                label="Description length"
+                min={isDream ? 50 : 5}
+                max={isDream ? 756 : 80}
+                step={isDream ? 10 : 1}
+                valueMin={settings.descriptionLengthMin}
+                valueMax={settings.descriptionLengthMax}
+                onChangeMin={(v) =>
+                  update("descriptionLengthMin", Math.min(v, settings.descriptionLengthMax - 1))
+                }
+                onChangeMax={(v) =>
+                  update("descriptionLengthMax", Math.max(v, settings.descriptionLengthMin + 1))
+                }
+                suffix={isDream ? "chars" : "words"}
+                hint={
+                  isDream
+                    ? "Dreamstime measures the description in characters (≤ 756)."
+                    : "Description length is enforced in words; longer responses are trimmed."
+                }
+              />
 
               <RangeSlider
                 label="Keywords count"
                 min={5}
-                max={49}
+                max={80}
                 step={1}
                 valueMin={settings.keywordsCountMin}
                 valueMax={settings.keywordsCountMax}
                 onChangeMin={(v) => update("keywordsCountMin", Math.min(v, settings.keywordsCountMax - 1))}
                 onChangeMax={(v) => update("keywordsCountMax", Math.max(v, settings.keywordsCountMin + 1))}
                 suffix="keywords"
-                hint="Extras are dropped beyond the maximum."
+                hint="Extras are dropped; if the LLM returns too few we re-prompt once for more."
               />
 
               <div>
@@ -131,6 +151,28 @@ export default function ControlsPanel({ settings, update, platform, setPlatform 
                   onToggle={(v) => update("useSuffix", v)}
                   value={settings.suffix}
                   onChange={(v) => update("suffix", v)}
+                />
+                <ToggleWithInput
+                  label="Description Prefix"
+                  placeholder='e.g. "Stock image of "'
+                  hint="Always added to the start of every description."
+                  checked={settings.useDescPrefix}
+                  onToggle={(v) => update("useDescPrefix", v)}
+                  value={settings.descPrefix}
+                  onChange={(v) => update("descPrefix", v)}
+                />
+                <ToggleWithInput
+                  label="Description Suffix"
+                  placeholder='e.g. " Ideal for print and web."'
+                  hint={
+                    isDream
+                      ? "Added to the end of every description, before the AI notice."
+                      : "Always added to the end of every description."
+                  }
+                  checked={settings.useDescSuffix}
+                  onToggle={(v) => update("useDescSuffix", v)}
+                  value={settings.descSuffix}
+                  onChange={(v) => update("descSuffix", v)}
                 />
                 <ToggleWithInput
                   label="Negative Title Words"
@@ -199,7 +241,7 @@ export default function ControlsPanel({ settings, update, platform, setPlatform 
                 onChangeMin={(v) => update("promptLengthMin", Math.min(v, settings.promptLengthMax - 50))}
                 onChangeMax={(v) => update("promptLengthMax", Math.max(v, settings.promptLengthMin + 50))}
                 suffix="chars"
-                hint="Output is truncated to the maximum at a word boundary."
+                hint="Output is guaranteed to fall in this range — short responses are re-prompted, long ones are truncated."
               />
 
               <div>
@@ -283,7 +325,7 @@ function OptionalBlock({
       <ToggleWithInput
         label="Prohibited Words"
         placeholder="comma-separated, e.g. brand names, logos, generic"
-        hint="The AI will never use these anywhere in the output."
+        hint="The AI will never use these in the title, description, keywords or prompt."
         checked={settings.useProhibitedWords}
         onToggle={(v) => update("useProhibitedWords", v)}
         value={settings.prohibitedWords}
@@ -421,17 +463,6 @@ function RangeRow({
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-16 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-background text-[10px] font-bold text-right focus:outline-none focus:ring-1 focus:ring-brand"
       />
-    </div>
-  );
-}
-
-function FixedRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40">
-      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-        {label}
-      </span>
-      <span className="text-[11px] font-bold">{value}</span>
     </div>
   );
 }

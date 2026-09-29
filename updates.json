@@ -2,6 +2,25 @@
   "$schema": "Maintained by Plickify. Newest entries first. Fork users see this file's contents on the /updates page and via the nav bell.",
   "updates": [
     {
+      "version": "2.10.0",
+      "date": "2026-09-29",
+      "type": "feature",
+      "title": "Generator matches CSV Tree feature-for-feature",
+      "changes": [
+        "New Description length slider (words normally, characters for Dreamstime) plus Description Prefix and Description Suffix options, all enforced server-side with room reserved for the AI disclosure",
+        "Switching the export platform to Dreamstime auto-applies its contributor limits (title 5-130, description 50-250 chars, keywords 7-80) and switching away restores the standard defaults",
+        "Green/amber bounds badges under Title, Keywords, Description and Prompt show the live count against your target range, with an LLM under-delivered note when short",
+        "Short responses re-prompt themselves: undershot titles are rewritten longer, missing keywords are requested as a deficit and merged, and short prompts are extended - all server-side best-effort",
+        "Result cards now show the platform chip with the CSV format, compression info (2.5 MB -> 512 KB), and a title label based on your real bound instead of a hardcoded 100",
+        "Toolbar reworked to the CSV Tree layout: merged Processing/Success/Failed/time stats strip that lingers 3 seconds after a batch, Generate All (n), File ext selector and Export CSV / Export TXT buttons",
+        "Success popup only fires on a full-batch success (partial runs toast instead), closes with Escape, and has a Don't show again option; dropzone shows the Images/Videos/SVG/AI/EPS chips, the provider shows its display name, and control hints match CSV Tree"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
       "version": "2.9.0",
       "date": "2026-09-29",
       "type": "feature",

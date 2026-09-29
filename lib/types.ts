@@ -61,6 +61,26 @@ export interface GeneratedMetadata {
 export type GenerationMode = "metadata" | "img2prompt";
 
 /**
+ * Length/count bounds of one generated field - drives the green/amber
+ * badge under each result field (port of CSV Tree's BoundsBadge).
+ */
+export interface FieldBounds {
+  min: number;
+  max: number;
+  length: number;
+  ok: boolean;
+}
+
+export interface ResultBounds {
+  title?: FieldBounds;
+  keywords?: FieldBounds;
+  /** Present only in char mode (Dreamstime). */
+  description?: FieldBounds;
+  /** img2prompt mode. */
+  prompt?: FieldBounds;
+}
+
+/**
  * Per-visitor generator options (persisted in the visitor's localStorage).
  * Mirrors every control of the CSV Tree Generator sidebar.
  */
@@ -71,6 +91,14 @@ export interface GeneratorUserSettings {
   titleLengthMax: number;
   keywordsCountMin: number;
   keywordsCountMax: number;
+  // Description range - words normally, characters when the platform is
+  // Dreamstime (CSV Tree measures Dreamstime descriptions in chars).
+  descriptionLengthMin: number;
+  descriptionLengthMax: number;
+  useDescPrefix: boolean;
+  descPrefix: string;
+  useDescSuffix: boolean;
+  descSuffix: string;
   usePrefix: boolean;
   prefix: string;
   useSuffix: boolean;
@@ -104,6 +132,12 @@ export const DEFAULT_USER_SETTINGS: GeneratorUserSettings = {
   titleLengthMax: 100,
   keywordsCountMin: 20,
   keywordsCountMax: 30,
+  descriptionLengthMin: 12,
+  descriptionLengthMax: 30,
+  useDescPrefix: false,
+  descPrefix: "",
+  useDescSuffix: false,
+  descSuffix: "",
   usePrefix: false,
   prefix: "",
   useSuffix: false,

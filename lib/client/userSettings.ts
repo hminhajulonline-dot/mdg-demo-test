@@ -38,6 +38,7 @@ export function setUserSettings(patch: Partial<GeneratorUserSettings>): void {
   // Keep invariants sane.
   next.titleLengthMax = Math.max(next.titleLengthMax, next.titleLengthMin + 5);
   next.keywordsCountMax = Math.max(next.keywordsCountMax, next.keywordsCountMin + 1);
+  next.descriptionLengthMax = Math.max(next.descriptionLengthMax, next.descriptionLengthMin + 1);
   next.promptLengthMax = Math.max(next.promptLengthMax, next.promptLengthMin + 50);
   cache = next;
   try {

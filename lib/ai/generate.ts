@@ -75,17 +75,196 @@ export async function generateWithAi(
     jsonMode: options.mode !== "img2prompt",
   });
 
-  const durationMs = Date.now() - started;
-
   if (options.mode === "img2prompt") {
     let p = extractImg2PromptText(rawText);
     p = enforcePrompt(p, options);
-    return { metadata: null, promptText: p, provider: resolved.def.id, model: resolved.model, durationMs };
+
+    // The LLM frequently undershoots the requested minimum on the first
+    // pass. Re-prompt the same provider once asking it to expand, then
+    // keep whichever attempt is closer to the range. Overshoot alone never
+    // retries - it is already truncated to max in enforcePrompt.
+    if (p.length < options.promptLengthMin) {
+      try {
+        const retryText = await callAiProvider(resolved, {
+          imageBase64: input.imageBase64,
+          mimeType: input.mimeType,
+          prompt: buildExtendPrompt(p, options.promptLengthMin, options.promptLengthMax),
+        });
+        const extended = enforcePrompt(extractImg2PromptText(retryText), options);
+        if (extended.length > p.length) p = extended;
+      } catch {
+        // Best-effort - keep the original short result.
+      }
+    }
+
+    return {
+      metadata: null,
+      promptText: p,
+      provider: resolved.def.id,
+      model: resolved.model,
+      durationMs: Date.now() - started,
+    };
   }
 
   const parsed = parseJsonResponse(rawText);
-  const metadata = enforceMetadata(parsed, options);
-  return { metadata, promptText: null, provider: resolved.def.id, model: resolved.model, durationMs };
+  let metadata = enforceMetadata(parsed, options);
+
+  // Title undershoot retry: vision LLMs habitually return 40-70 char
+  // titles and ignore the STRICT instruction. Feed the short title back
+  // asking for a longer rewrite, then re-enforce so banned-words /
+  // affixes / max-truncation stay consistent. Best-effort.
+  if (metadata.title.length < options.titleLengthMin) {
+    try {
+      const retryText = await callAiProvider(resolved, {
+        imageBase64: input.imageBase64,
+        mimeType: input.mimeType,
+        prompt: buildTitleExtendPrompt(
+          metadata.title,
+          options.titleLengthMin,
+          options.titleLengthMax,
+          options.negativeTitleWords
+        ),
+      }, { jsonMode: false });
+      const extended = extractTitleText(retryText);
+      if (extended && extended.length > metadata.title.length) {
+        metadata = enforceMetadata({ ...metadata, title: extended }, options);
+      }
+    } catch {
+      // Keep the original short title.
+    }
+  }
+
+  // Keyword undershoot retry: ask for ONLY the deficit with the existing
+  // list visible so it doesn't repeat, then merge + re-enforce (dedupe,
+  // banned filter, max slice). Best-effort.
+  if (metadata.keywords.length < options.keywordsCountMin) {
+    try {
+      const retryText = await callAiProvider(resolved, {
+        imageBase64: input.imageBase64,
+        mimeType: input.mimeType,
+        prompt: buildKeywordsExtendPrompt(
+          metadata.keywords,
+          options.keywordsCountMin,
+          options.keywordsCountMax,
+          options.negativeKeywords
+        ),
+      }, { jsonMode: true });
+      const extra = parseKeywordExtension(retryText);
+      if (extra.length) {
+        metadata = enforceMetadata(
+          { ...metadata, keywords: [...metadata.keywords, ...extra] },
+          options
+        );
+      }
+    } catch {
+      // Keep the original short list.
+    }
+  }
+
+  return {
+    metadata,
+    promptText: null,
+    provider: resolved.def.id,
+    model: resolved.model,
+    durationMs: Date.now() - started,
+  };
+}
+
+/* ---------------------------------------------------------------------- */
+/* Undershoot extension re-prompts - port of CSV Tree's build*ExtendPrompt */
+/* ---------------------------------------------------------------------- */
+
+/**
+ * img2prompt: feed the short prompt back with the exact deficit so the
+ * model extends with concrete detail instead of fluff.
+ */
+function buildExtendPrompt(currentText: string, min: number, max: number): string {
+  const have = (currentText || "").length;
+  const deficit = Math.max(0, min - have);
+  const target = Math.round((min + max) / 2);
+  return `Below is a text-to-image prompt that is too short. Extend it so it is at least ${min} characters and at most ${max} characters long. Aim for around ${target} characters total. Add concrete sensory details — texture, palette, lens, light direction, mood, foreground/background — rather than padding with filler or repeating phrases. Keep the original subject and style intact.\n\nCurrent prompt (${have} chars, ${deficit} short of the minimum):\n${currentText}\n\nOUTPUT RULES:\n- Return ONLY the extended prompt as plain text, no markdown, no JSON, no quotes.\n- Do NOT prepend "Extended:" or any other label.\n- Do NOT use code fences.`;
+}
+
+/** Metadata: rewrite a title that undershot the configured minimum. */
+function buildTitleExtendPrompt(
+  currentTitle: string,
+  tMin: number,
+  tMax: number,
+  negativeTitleWords: string
+): string {
+  const have = (currentTitle || "").length;
+  const deficit = Math.max(0, tMin - have);
+  const target = Math.round((tMin + tMax) / 2);
+  let p = `The microstock title below is too short. Rewrite it so the new title is at least ${tMin} characters and at most ${tMax} characters long. Aim for around ${target} characters. Keep the same subject as the current title and stay accurate to the image — add concrete descriptors (material, colour, mood, setting, style, composition) instead of padding with filler or repeating words.\n\nCurrent title (${have} chars, ${deficit} short of the minimum):\n${currentTitle}\n\nOUTPUT RULES:\n- Return ONLY the new title as plain text, no quotes, no markdown, no JSON.\n- Do NOT prepend "Title:" or any other label.\n- Do NOT use code fences.\n- Keep it SEO-friendly, no filler words like "amazing", "stunning", "beautiful" unless visually justified.`;
+  if (negativeTitleWords) p += `\n- Do NOT include any of these words: ${negativeTitleWords}`;
+  return p;
+}
+
+/** Metadata: request only the missing keywords, then merge deduped. */
+function buildKeywordsExtendPrompt(
+  existingKeywords: string[],
+  kMin: number,
+  kMax: number,
+  negativeKeywords: string
+): string {
+  const have = existingKeywords.length;
+  const need = Math.max(0, kMin - have);
+  const ask = Math.min(kMax - have, Math.max(need, Math.round((kMin + kMax) / 2) - have));
+  const list = existingKeywords.map((k) => `- ${k}`).join("\n");
+  let p = `The image already has these ${have} keywords:\n${list}\n\nReturn ${ask} ADDITIONAL keywords for the same image. Total should land between ${kMin} and ${kMax}.\n\nRULES:\n- Do NOT repeat any keyword already listed above (case-insensitive).\n- Keep keywords short (1-3 words each), descriptive, and relevant to the subject, style, mood, composition or lighting.\n- Return ONLY a JSON array of strings, no markdown, no prose, no code fences.\nExample format: ["keyword one", "keyword two", "keyword three"]`;
+  if (negativeKeywords) p += `\n- Do NOT include any of these: ${negativeKeywords}`;
+  return p;
+}
+
+/**
+ * Strip whatever wrapping a vision LLM puts around a single-line title
+ * reply (quotes, "Title:" prefix, fences, JSON). Never throws.
+ */
+function extractTitleText(raw: string): string {
+  if (!raw) return "";
+  let text = String(raw).trim();
+  const fence = text.match(/^```(?:json|text)?\s*\n?([\s\S]*?)\n?```$/i);
+  if (fence) text = fence[1].trim();
+  if (text.startsWith("{")) {
+    try {
+      const obj = JSON.parse(text) as { title?: unknown };
+      if (typeof obj.title === "string" && obj.title.trim()) return obj.title.trim();
+    } catch {
+      const m = text.match(/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      if (m) return m[1].trim();
+    }
+  }
+  const firstLine =
+    text.split(/\r?\n/).map((s) => s.trim()).find(Boolean) || "";
+  return firstLine
+    .replace(/^["'`*]+|["'`*]+$/g, "")
+    .replace(/^(?:title|new title|rewritten title)\s*[:-]\s*/i, "")
+    .trim();
+}
+
+/** Parse the "more keywords" retry response (JSON array, tolerant). */
+function parseKeywordExtension(raw: string): string[] {
+  if (!raw) return [];
+  let text = String(raw).trim();
+  const fence = text.match(/^```(?:json|text)?\s*\n?([\s\S]*?)\n?```$/i);
+  if (fence) text = fence[1].trim();
+  try {
+    const arr = JSON.parse(text);
+    if (Array.isArray(arr)) return arr.map((x) => String(x).trim()).filter(Boolean);
+  } catch {
+    const m = text.match(/\[[\s\S]*\]/);
+    if (m) {
+      try {
+        const arr = JSON.parse(m[0]);
+        if (Array.isArray(arr)) return arr.map((x) => String(x).trim()).filter(Boolean);
+      } catch {}
+    }
+  }
+  // Last resort: split on commas / newlines, strip bullets and quotes.
+  return text
+    .split(/[\n,]+/)
+    .map((s) => s.replace(/^[\s\-*•"'']+|["'\s]+$/g, "").trim())
+    .filter(Boolean);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -415,9 +594,22 @@ export function enforceMetadata(
   title = applyAffix(title, o.prefix, o.suffix);
   title = truncateWordBoundary(title, o.titleLengthMax);
 
-  // Description.
+  // Description: prohibited words -> user prefix/suffix -> platform char
+  // budget. Dreamstime AI uploads must close with the disclosure sentence,
+  // so room for it is reserved BEFORE the final truncation - otherwise the
+  // mandatory sentence would be the first thing cut off.
   let description = typeof meta.description === "string" ? meta.description.trim() : "";
   description = stripBannedWords(description, o.prohibitedWords);
+  description = applyAffix(description, o.descPrefix, o.descSuffix);
+
+  const charMode = o.descriptionUnit === "chars";
+  const dMax = charMode ? o.descriptionCharMax : 2000;
+  let finalDescription =
+    description.length > dMax ? truncateWordBoundary(description, dMax) : description;
+  if (o.platform === "dreamstime" && o.isAIGenerated && !endsWithAIDisclosure(finalDescription)) {
+    const tail = ` ${AI_DISCLOSURE}`;
+    finalDescription = `${truncateWordBoundary(finalDescription, Math.max(0, dMax - tail.length))}${tail}`.trim();
+  }
 
   // Keywords: banned -> trim/dedupe (case-insensitive) -> cap at max.
   const seen = new Set<string>();
@@ -461,14 +653,6 @@ export function enforceMetadata(
     }
     const names = toCategoryNames(catIds).slice(0, 3);
     if (names.length) categories = names;
-  }
-
-  // Dreamstime AI disclosure must be the closing sentence - reserve room for
-  // it BEFORE the final truncation so it can never be the part cut off.
-  let finalDescription = truncateWordBoundary(description, 2000);
-  if (o.platform === "dreamstime" && o.isAIGenerated && !endsWithAIDisclosure(finalDescription)) {
-    const tail = ` ${AI_DISCLOSURE}`;
-    finalDescription = `${truncateWordBoundary(description, Math.max(0, 2000 - tail.length))}${tail}`.trim();
   }
 
   return {
