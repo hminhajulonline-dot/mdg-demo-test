@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { getSiteSettings } from "@/lib/settings";
 import { assertLicenseIntegrity } from "@/lib/core/license";
+import RouteProgress from "@/components/branding/RouteProgress";
 import "./globals.css";
 
 // Core integrity check - the site refuses to render when the required
@@ -79,7 +80,10 @@ export default async function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <RouteProgress />
+        {children}
+      </body>
     </html>
   );
 }

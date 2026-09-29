@@ -2,6 +2,22 @@
   "$schema": "Maintained by Plickify. Newest entries first. Fork users see this file's contents on the /updates page and via the nav bell.",
   "updates": [
     {
+      "version": "2.9.0",
+      "date": "2026-09-29",
+      "type": "feature",
+      "title": "Faster pages, loading spinners and route progress",
+      "changes": [
+        "Site and generator settings are cached with a 60-second revalidate and reads are memoized, so pages no longer wait on Supabase on every render",
+        "Middleware skips all network calls on public paths and cookie-less requests, and only verifies the session user when a protected route actually needs it",
+        "New loading.tsx spinners for the site, /tools and /admin, plus an animated top progress bar during route transitions",
+        "Admin-status lookup is request-memoized so layouts never duplicate the user check"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
       "version": "2.8.1",
       "date": "2026-09-28",
       "type": "docs",
