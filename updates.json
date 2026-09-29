@@ -2,6 +2,24 @@
   "$schema": "Maintained by Plickify. Newest entries first. Fork users see this file's contents on the /updates page and via the nav bell.",
   "updates": [
     {
+      "version": "2.12.0",
+      "date": "2026-09-29",
+      "type": "bugfix",
+      "title": "Generator previews instant, no more failed generations",
+      "changes": [
+        "File previews are never dimmed or hidden anymore - the artwork shows at full opacity from the moment you upload, while Generating... and error messages appear in the data column instead of covering the preview (CSV Tree behavior)",
+        "AI/EPS files preview instantly via Ghostscript first (real full-color vector art) with a Rendering EPS… tile while rasterizing; SVG previews appear natively right after upload",
+        "Vector files whose preview cannot be rendered no longer fail - a placeholder tile is shown and metadata is generated from the filename, exactly like CSV Tree, so EPS/AI cards always produce results",
+        "Generation is far more reliable: transient provider errors (network, timeouts, 5xx) now retry automatically with exponential backoff before rotating keys, and request timeouts were tightened so hung calls fail over instead of stalling",
+        "Serverless function budget raised from 60s to 300s so title/keyword extension re-prompts can never be killed mid-generation",
+        "Queued cards show Generating... as soon as a batch starts (no more idle Queued state), and stopping a batch returns unfinished cards to pending so you can resume"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
       "version": "2.11.0",
       "date": "2026-09-29",
       "type": "feature",

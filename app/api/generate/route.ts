@@ -10,7 +10,10 @@ import { hashIp, rateLimit } from "@/lib/rateLimit";
 import { assertLicenseIntegrity } from "@/lib/core/license";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Extension re-prompts (title/keywords undershoot) can stack 2-3 provider
+// calls per request; 300s gives them room instead of being killed at 60s
+// mid-generation (CSV Tree runs the same retries in-browser, uncapped).
+export const maxDuration = 300;
 
 const ALLOWED_MIME = new Set([
   "image/jpeg",
@@ -180,8 +183,11 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  // CSV Tree parity: a vector with no renderable preview sends NO image -
+  // metadata is generated from the filename instead of erroring the card.
+  const isPlaceholder = body.placeholder === true;
   let imageBase64 = typeof body.imageBase64 === "string" ? body.imageBase64 : "";
-  if (!imageBase64) {
+  if (!imageBase64 && !isPlaceholder) {
     return NextResponse.json({ error: "Missing image data." }, { status: 400 });
   }
   if (imageBase64.includes(",")) imageBase64 = imageBase64.slice(imageBase64.indexOf(",") + 1);
@@ -226,17 +232,27 @@ export async function POST(request: Request) {
   }
 
   const prompt = buildPrompt(options);
+  const filename = typeof body.filename === "string" ? body.filename.slice(0, 200) : "";
+  const finalPrompt = isPlaceholder
+    ? // Port of CSV Tree's filename-fallback note: without an image the model
+      // must infer subject/style from the filename instead of hallucinating
+      // against a blank placeholder tile.
+      `${prompt}\n\nNote: The file "${filename}" is a vector EPS/AI with no embedded raster preview, so no image is available. Generate metadata based on the filename "${filename
+        .replace(/\.[^.]+$/, "")
+        .replace(/[_-]+/g, " ")
+        .trim()}" — infer a plausible clean vector subject, style and keywords suitable for microstock. Keep it concise and stock-ready.`
+    : prompt;
 
   try {
     const outcome = await generateWithAi(
-      { imageBase64, mimeType, prompt },
+      { imageBase64, mimeType, prompt: finalPrompt },
       options,
       override
     );
 
     logUsage({
       ipHash: hashIp(clientIp(request)),
-      filename: typeof body.filename === "string" ? body.filename.slice(0, 200) : undefined,
+      filename: filename || undefined,
       success: true,
       provider: outcome.provider,
       model: outcome.model,

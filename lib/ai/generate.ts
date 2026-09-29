@@ -9,7 +9,25 @@ import {
   toCategoryNames,
 } from "@/lib/csv/dreamstimeRules";
 
-const REQUEST_TIMEOUT_MS = 90_000;
+// Per-call timeout: tight enough that a hung provider rotates quickly,
+// loose enough for large images (CSV Tree uses 22s in-browser; we can afford
+// a little more because the serverless budget is 300s).
+const REQUEST_TIMEOUT_MS = 30_000;
+
+// Transient-error retries with exponential backoff (CSV Tree withRetry).
+// Rate-limits are NOT retried inline - the client rotates keys/providers.
+const RETRY_DELAYS = [300, 900];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isRetryable(err: unknown): boolean {
+  const e = err as { name?: string; message?: string } | null | undefined;
+  const msg = String(e?.message || "").toLowerCase();
+  if (e?.name === "AbortError") return true;
+  return /timeout|aborted|network|fetch|econn|temporarily|overloaded|5\d\d/.test(msg);
+}
 
 export interface GenerateInput {
   imageBase64: string; // raw base64, no data: prefix
@@ -33,15 +51,27 @@ export interface TextCallOptions {
 /**
  * Single dispatch point for every provider kind. Image parts are optional,
  * so text-only instructions (prompt generator tools) share this path.
+ * Wrapped in withRetry: transient errors (network, 5xx, timeouts) get an
+ * exponential-backoff retry before the client rotates to the next key.
  */
 export async function callAiProvider(
   provider: ResolvedProvider,
   input: TextInput,
   opts: TextCallOptions = {}
 ): Promise<string> {
-  if (provider.def.kind === "gemini") return callGemini(provider, input, opts);
-  if (provider.def.kind === "cloudflare") return callCloudflare(provider, input, opts);
-  return callOpenAICompatible(provider, input, opts);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
+    try {
+      if (provider.def.kind === "gemini") return await callGemini(provider, input, opts);
+      if (provider.def.kind === "cloudflare") return await callCloudflare(provider, input, opts);
+      return await callOpenAICompatible(provider, input, opts);
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryable(err) || attempt === RETRY_DELAYS.length) throw err;
+      await sleep(RETRY_DELAYS[attempt]);
+    }
+  }
+  throw lastErr;
 }
 
 export interface GenerateOutcome {

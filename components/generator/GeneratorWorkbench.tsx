@@ -123,15 +123,20 @@ function warmVectorPreview(
           it.id === id && !it.prepBase64
             ? {
                 ...it,
+                thumbLoading: false,
                 previewUrl: `data:image/jpeg;base64,${prep.base64}`,
                 prepBase64: prep.base64,
                 prepMime: prep.mimeType,
+                prepPlaceholder: prep.placeholder || undefined,
               }
             : it
         )
       );
     } catch {
       // Keep the placeholder; callGenerate will attempt rasterization again.
+      setItems((prev) =>
+        prev.map((x) => (x.id === id ? { ...x, thumbLoading: false } : x))
+      );
     }
   })();
 }
@@ -149,6 +154,8 @@ interface WorkItem extends CardItem {
   /** Cached vector rasterization from the upload-time preview pass. */
   prepBase64?: string;
   prepMime?: string;
+  /** Vector had no renderable preview - generation runs from the filename. */
+  prepPlaceholder?: boolean;
 }
 
 interface Stats {
@@ -292,7 +299,7 @@ export default function GeneratorWorkbench({
 
       const built: WorkItem[] = slice.map((file) => {
         const fileUrl = URL.createObjectURL(file);
-        const vector = detectVector(file.name) !== null;
+        const vector = detectVector(file.name);
         return {
           id: `img_${nowMs()}_${idCounter.current++}`,
           filename: file.name,
@@ -303,9 +310,11 @@ export default function GeneratorWorkbench({
           keywords: [],
           category: "",
           promptText: undefined,
-          // Vectors have no native browser preview - placeholder tile while
-          // warmVectorPreview rasterizes them in the background.
-          previewUrl: vector ? "" : fileUrl,
+          // SVG renders natively in the browser - instant full-opacity
+          // preview (CSV Tree parity). AI/EPS/PDF show a "Rendering EPS…"
+          // tile until warmVectorPreview rasterizes them.
+          previewUrl: vector === "postscript" ? "" : fileUrl,
+          thumbLoading: vector === "postscript" || undefined,
           fileUrl,
           fileType: file.type || file.name.slice(file.name.lastIndexOf(".") + 1),
           fileSize: file.size,
@@ -359,11 +368,13 @@ export default function GeneratorWorkbench({
     // Vectors (SVG/AI/EPS/PDF) are rasterized locally; rasters downscaled;
     // videos reduced to a representative frame. The rendered artwork becomes
     // the card preview immediately.
-    let prepared;
+    let prepared: { base64: string; mimeType: string; placeholder?: boolean };
+    let isPlaceholder = false;
     const vectorKind = detectVector(item.filename);
     if (item.prepBase64) {
       // Upload-time preview pass already rasterized this vector - reuse it.
       prepared = { base64: item.prepBase64, mimeType: item.prepMime || "image/jpeg" };
+      isPlaceholder = item.prepPlaceholder === true;
       updateItem(item.id, {
         previewUrl: `data:image/jpeg;base64,${prepared.base64}`,
       });
@@ -378,6 +389,7 @@ export default function GeneratorWorkbench({
         new File([blob], item.filename, { type: "application/postscript" }),
         ext
       );
+      isPlaceholder = prepared.placeholder === true;
       updateItem(item.id, {
         previewUrl: `data:image/jpeg;base64,${prepared.base64}`,
       });
@@ -407,7 +419,10 @@ export default function GeneratorWorkbench({
     const payloadBase = {
       filename: item.filename,
       mimeType: prepared.mimeType,
-      imageBase64: prepared.base64,
+      // CSV Tree parity: a vector with no renderable preview sends NO image
+      // - the server generates metadata from the filename instead of failing.
+      imageBase64: isPlaceholder ? "" : prepared.base64,
+      ...(isPlaceholder ? { placeholder: true } : {}),
       // Original on-disk type: PNGs keep their transparent-background
       // phrasing even after canvas compression to JPEG.
       pngSource: item.fileType === "image/png",
@@ -537,6 +552,14 @@ export default function GeneratorWorkbench({
     abortRef.current.aborted = false;
     setRunning(true);
 
+    // CSV Tree marks the whole batch "processing" up front so every queued
+    // card shows Generating... instead of sitting idle until its turn.
+    setItems((prev) =>
+      prev.map((it) =>
+        pendingIds.includes(it.id) ? { ...it, status: "processing", error: undefined } : it
+      )
+    );
+
     // Parallel worker pool - ~3x faster than sequential batches.
     const ids = [...pendingIds];
     const failedIds: string[] = [];
@@ -606,6 +629,11 @@ export default function GeneratorWorkbench({
 
     setRunning(false);
     if (abortRef.current.aborted) {
+      // Settle: rows that never started go back to pending so the batch can
+      // be resumed (CSV Tree clears the processing flag the same way).
+      setItems((prev) =>
+        prev.map((it) => (it.status === "processing" ? { ...it, status: "pending" } : it))
+      );
       setFallbackMsg("Stopped. Partial results kept.");
       return;
     }

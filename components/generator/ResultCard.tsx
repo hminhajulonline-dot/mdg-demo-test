@@ -42,6 +42,8 @@ export interface CardItem {
   bounds?: ResultBounds;
   /** Video file - preview plays inline instead of an <img>. */
   isVideo?: boolean;
+  /** Vector still rasterizing after upload - shows the "Rendering EPS…" tile. */
+  thumbLoading?: boolean;
   // metadata result
   title: string;
   description: string;
@@ -165,26 +167,23 @@ export default function ResultCard({ item, platform, isAIGenerated, onUpdate, on
               </IconBtn>
             </>
           )}
-          {busy && (
-            <span className="h-5 w-5 animate-spin rounded-full border-2 border-brand border-t-transparent" aria-label="Processing" />
-          )}
         </div>
       </div>
 
-      {/* Error banner */}
-      {item.status === "error" ? (
-        <div className="px-4 sm:px-5 py-4 bg-red-50 dark:bg-red-950/30 border-b border-red-100 dark:border-red-900/40">
-          <p className="text-sm text-red-700 dark:text-red-300 leading-relaxed">{item.error}</p>
-          <button onClick={onRegenerate} className="mt-2 text-xs font-semibold text-brand hover:underline">
-            Try again →
-          </button>
-        </div>
-      ) : (
-        /* Two-column body: preview half + data half */
-        <div className="grid md:grid-cols-2 gap-0 divide-y md:divide-y-0 md:divide-x divide-slate-100 dark:border-slate-800 md:dark:divide-slate-800">
-          {/* LEFT HALF - preview */}
-          <div className="relative min-h-[220px] bg-white dark:bg-slate-900/60 flex items-center justify-center p-3">
-            {item.previewUrl && item.isVideo ? (
+      {/* Two-column body: preview half + data half. The preview is NEVER
+          dimmed or hidden - CSV Tree keeps the artwork at full opacity from
+          upload through generation, error and retry. */}
+      <div className="grid md:grid-cols-2 gap-0 divide-y md:divide-y-0 md:divide-x divide-slate-100 dark:border-slate-800 md:dark:divide-slate-800">
+        {/* LEFT HALF - preview */}
+        <div className="relative min-h-[220px] bg-white dark:bg-slate-900/60 flex items-center justify-center p-3">
+          {item.thumbLoading ? (
+            <div className="text-center">
+              <span className="inline-flex h-8 w-8 animate-spin rounded-full border-[3px] border-brand border-t-transparent mb-2" />
+              <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                Rendering EPS…
+              </p>
+            </div>
+          ) : item.previewUrl && item.isVideo ? (
               <video
                 src={item.previewUrl}
                 controls
@@ -214,16 +213,27 @@ export default function ResultCard({ item, platform, isAIGenerated, onUpdate, on
                 <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">Vector file</p>
               </div>
             )}
-            {busy ? (
-              <span className="absolute inset-0 rounded-lg bg-background/60 backdrop-blur-[1px] grid place-items-center">
-                <span className="h-8 w-8 animate-spin rounded-full border-[3px] border-brand border-t-transparent" />
-              </span>
-            ) : null}
           </div>
 
-          {/* RIGHT HALF - data */}
+          {/* RIGHT HALF - data - mirrors CSV Tree: "Generating..." and the
+              error box live here while the preview stays untouched. */}
           <div className="px-4 sm:px-5 py-4 space-y-3">
-            {item.mode === "img2prompt" ? (
+            {item.status === "error" ? (
+              <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-4 py-3">
+                <p className="text-sm font-semibold text-red-600 dark:text-red-400 mb-1">
+                  Generation failed
+                </p>
+                <p className="text-xs text-red-700 dark:text-red-300 leading-relaxed">{item.error}</p>
+                <button onClick={onRegenerate} className="mt-2 text-xs font-semibold text-brand hover:underline">
+                  Try again →
+                </button>
+              </div>
+            ) : item.status === "processing" ? (
+              <div className="h-full flex items-center justify-center text-slate-500 py-10">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent mr-2" />
+                Generating...
+              </div>
+            ) : item.mode === "img2prompt" ? (
               <div>
                 <Field
                   label={`Creative Prompt (${pLen} chars)`}
@@ -240,16 +250,14 @@ export default function ResultCard({ item, platform, isAIGenerated, onUpdate, on
               </div>
             ) : (
               <>
-                {item.status === "done" ? (
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 mb-2 flex items-center gap-1.5">
-                    <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold uppercase tracking-wider">
-                      {getPlatform(platform).name}
-                    </span>
-                    <span className="truncate">
-                      format · {fields.map((f) => CARD_FIELD_LABELS[f] || f).join(" · ")}
-                    </span>
-                  </p>
-                ) : null}
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 mb-2 flex items-center gap-1.5">
+                  <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold uppercase tracking-wider">
+                    {getPlatform(platform).name}
+                  </span>
+                  <span className="truncate">
+                    format · {fields.map((f) => CARD_FIELD_LABELS[f] || f).join(" · ")}
+                  </span>
+                </p>
                 {showTitle ? (
                   <div>
                     <Field
@@ -367,7 +375,6 @@ export default function ResultCard({ item, platform, isAIGenerated, onUpdate, on
             ) : null}
           </div>
         </div>
-      )}
 
       {/* Footer actions */}
       <div className="flex flex-wrap items-center gap-2 px-4 sm:px-5 py-3 border-t border-slate-100 dark:border-slate-800">
