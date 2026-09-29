@@ -37,7 +37,7 @@ export default function Dropzone({
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
-      className={`rounded-2xl border-2 border-dashed p-10 text-center transition-colors cursor-pointer select-none ${
+      className={`rounded-2xl border-2 border-dashed text-center transition-colors cursor-pointer select-none ${
         dragging
           ? "border-brand bg-brand/5"
           : "border-slate-300 dark:border-slate-700 hover:border-brand/60 hover:bg-slate-50 dark:hover:bg-slate-900"
@@ -55,25 +55,40 @@ export default function Dropzone({
           e.target.value = "";
         }}
       />
-      <svg
-        className="mx-auto h-10 w-10 text-brand"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        strokeWidth={1.6}
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
-        />
-      </svg>
-      <p className="mt-3 font-medium">
-        Drag &amp; drop images, videos or vector files here, or click to browse
-      </p>
-      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-        JPG, PNG, WebP, GIF, BMP, MP4, MOV, SVG, AI, EPS, PDF - up to {maxFiles} files per batch
-      </p>
+      <div className="px-6 py-8 flex flex-col items-center text-center">
+        <div className="flex items-center gap-2 mb-3">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.8}
+            className="h-4 w-4 text-brand"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
+            />
+          </svg>
+          <p className="text-sm font-bold uppercase tracking-wider">Upload Files</p>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-1.5 mb-4">
+          {["Images", "Videos", "SVG", "AI", "EPS"].map((tag) => (
+            <span
+              key={tag}
+              className="px-2.5 py-0.5 rounded-full bg-slate-900 dark:bg-slate-800 text-white text-[10px] font-bold uppercase"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+        <p className="text-sm text-slate-700 dark:text-slate-200">
+          Drag &amp; drop files here, or <span className="underline">browse</span>
+        </p>
+        <p className="text-[11px] text-slate-500 mt-1">
+          Supports image, video, SVG, AI &amp; EPS - up to {maxFiles} files per batch
+        </p>
+      </div>
     </div>
   );
 }

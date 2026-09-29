@@ -19,6 +19,10 @@ const QUALITY = 0.88;
 export interface PreparedImage {
   base64: string;
   mimeType: string;
+  /** Vector had no renderable preview - placeholder tile was generated. */
+  placeholder?: boolean;
+  /** Original filename (placeholder path feeds it to the text prompt). */
+  filenameFallback?: string;
 }
 
 let pdfjsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
@@ -46,10 +50,7 @@ async function loadPdfjs(mode: WorkerMode) {
 }
 
 /** Try rendering page one of a PDF payload; null on any failure. */
-async function tryRenderPdf(
-  data: Uint8Array,
-  firstErrorMessage?: { value: string }
-): Promise<PreparedImage | null> {
+async function tryRenderPdf(data: Uint8Array): Promise<PreparedImage | null> {
   // Two worker strategies: local file, then CDN (CSV Tree approach).
   for (const mode of ["local", "cdn"] as WorkerMode[]) {
     try {
@@ -89,11 +90,7 @@ async function tryRenderPdf(
         void loadingTask.destroy();
       }
     } catch (err) {
-      // Remember why the first strategy failed so the final error is
-      // actionable instead of a generic "no PDF-compatible data".
-      if (firstErrorMessage && !firstErrorMessage.value && err instanceof Error) {
-        firstErrorMessage.value = err.message;
-      }
+      void err;
     }
   }
   return null;
@@ -408,7 +405,18 @@ function canvasToJpegSync(canvas: HTMLCanvasElement): string | null {
   return idx >= 0 ? url.slice(idx + 1) : null;
 }
 
-/** Rasterize an AI/EPS/PDF file through the full fallback chain. */
+/**
+ * Rasterize a vector file through CSV Tree's exact fallback chain.
+ *
+ *   EPS/AI: Ghostscript WASM first (real full-colour vector art), then
+ *           pdf.js on embedded PDF data, embedded TIFF, embedded JPEG.
+ *   PDF:    pdf.js first, embedded previews, Ghostscript last.
+ *
+ * NEVER throws for EPS/AI/PDF (CSV Tree parity): when nothing is
+ * renderable we return a placeholder tile with `placeholder: true` so the
+ * card still shows a preview AND metadata is generated from the filename
+ * instead of failing the whole card.
+ */
 export async function preparePostScript(
   file: File,
   ext: "ai" | "eps" | "pdf"
@@ -422,23 +430,31 @@ export async function preparePostScript(
     );
   }
 
+  const isPostScript = ext === "eps" || ext === "ai";
+
+  // CSV Tree parity: Ghostscript FIRST for EPS/AI so the preview shows the
+  // real vector artwork in full colour instead of a stale embedded bitmap.
+  if (isPostScript) {
+    const viaGs = await tryGhostscript(bytes, file.name);
+    if (viaGs) return viaGs;
+  }
+
   const pdfOff = findPdfOffset(bytes);
-  const firstError = { value: "" };
 
   // CRITICAL: never hand pure PostScript data to pdf.js. Its parser logs a
   // console warning PER invalid byte, which freezes/crashes the browser on
   // multi-MB EPS files. Only run it when real PDF bytes exist.
   if (pdfOff >= 0) {
-    const direct = await tryRenderPdf(bytes, firstError);
+    const direct = await tryRenderPdf(bytes);
     if (direct) return direct;
 
     if (pdfOff > 0) {
-      const viaSlice = await tryRenderPdf(bytes.slice(pdfOff), firstError);
+      const viaSlice = await tryRenderPdf(bytes.slice(pdfOff));
       if (viaSlice) return viaSlice;
     }
   }
 
-  // No PDF payload inside (or pdf.js failed): instant embedded previews first.
+  // Embedded previews - instant, no engine load.
   const tiff = await extractEpsTiffPreview(bytes);
   if (tiff) return tiff;
 
@@ -449,17 +465,49 @@ export async function preparePostScript(
   }
 
   // Deep fallback: Ghostscript WASM renders pure PostScript (loads ~16 MB
-  // once per session, then cached).
-  const viaGs = await tryGhostscript(bytes, file.name);
-  if (viaGs) return viaGs;
+  // once per session, then cached). Skipped above for EPS/AI - already ran.
+  if (!isPostScript) {
+    const viaGs = await tryGhostscript(bytes, file.name);
+    if (viaGs) return viaGs;
+  }
 
-  const technical = firstError.value ? ` Technical detail: ${firstError.value}` : "";
-  throw new Error(
-    (ext === "eps"
-      ? `${file.name}: no renderable preview found. Re-export the EPS with an embedded preview (Illustrator: "Embed preview" / 72-150 dpi) or upload an SVG/PDF/JPG version instead.`
-      : `${file.name}: this AI file has no PDF-compatible data. In Illustrator use File > Save As and tick "Create PDF Compatible File", or export as SVG/PNG and add that instead.`) +
-      technical
+  // Nothing renderable - CSV Tree placeholder tile instead of an error, so
+  // generation still succeeds using the filename (no card ever fails).
+  return buildPlaceholderPreview(file.name, ext);
+}
+
+/**
+ * White 1024×1024 tile with a filename note - CSV Tree's exact fallback
+ * when a vector file has no renderable preview.
+ */
+function buildPlaceholderPreview(filename: string, ext: "ai" | "eps" | "pdf"): PreparedImage {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 1024;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return { base64: "", mimeType: "image/jpeg", placeholder: true, filenameFallback: filename };
+  }
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, 1024, 1024);
+  ctx.fillStyle = "#22c55e";
+  ctx.font = "bold 24px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(ext === "eps" ? "EPS Preview" : ext === "ai" ? "AI Preview" : "PDF Preview", 512, 480);
+  ctx.fillStyle = "#6b7280";
+  ctx.font = "14px Inter, sans-serif";
+  ctx.fillText(filename, 512, 510);
+  ctx.fillText(
+    ext === "eps" ? "Preview raster failed — metadata from filename" : "No PDF preview — metadata from filename",
+    512,
+    530
   );
+  return {
+    base64: canvasToJpegSync(canvas) ?? "",
+    mimeType: "image/jpeg",
+    placeholder: true,
+    filenameFallback: filename,
+  };
 }
 
 /** Rasterize an SVG via <img> + canvas. */

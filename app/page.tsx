@@ -2,10 +2,13 @@ import Link from "next/link";
 import SiteHeader from "@/components/branding/SiteHeader";
 import SiteFooter from "@/components/branding/SiteFooter";
 import { getSiteSettings } from "@/lib/settings";
+import { getAdminStatus } from "@/lib/auth";
 import { PLATFORMS } from "@/lib/csv/formats";
+import { TOOLS } from "@/lib/tools/registry";
 
 export default async function HomePage() {
-  const s = await getSiteSettings();
+  const [s, { user }] = await Promise.all([getSiteSettings(), getAdminStatus()]);
+  const isAuthed = !!user;
 
   return (
     <>
@@ -45,15 +48,33 @@ export default async function HomePage() {
               {s.hero_subtitle}
             </p>
             <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
-              <Link
-                href="/generator"
-                className="group inline-flex items-center gap-2 rounded-xl bg-brand px-7 py-3.5 font-semibold text-white shadow-lg shadow-brand/25 hover:shadow-brand/40 hover:-translate-y-0.5 transition-all"
+              {isAuthed ? (
+                <Link
+                  href="/generator"
+                  className="group inline-flex items-center gap-2 rounded-xl bg-brand px-7 py-3.5 font-semibold text-white shadow-lg shadow-brand/25 hover:shadow-brand/40 hover:-translate-y-0.5 transition-all"
+                >
+                  Open Generator
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4 transition-transform group-hover:translate-x-0.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+                  </svg>
+                </Link>
+              ) : (
+                <Link
+                  href="/login"
+                  className="group inline-flex items-center gap-2 rounded-xl bg-brand px-7 py-3.5 font-semibold text-white shadow-lg shadow-brand/25 hover:shadow-brand/40 hover:-translate-y-0.5 transition-all"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} className="h-4 w-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" />
+                  </svg>
+                  Sign in to get started
+                </Link>
+              )}
+              <a
+                href="#tools"
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-300 dark:border-slate-700 px-7 py-3.5 font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
               >
-                Open Generator
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-4 w-4 transition-transform group-hover:translate-x-0.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
-                </svg>
-              </Link>
+                Explore all tools
+              </a>
             </div>
 
             {/* Trust strip - derived from the export platform list */}
@@ -64,6 +85,51 @@ export default async function HomePage() {
               {PLATFORMS.length > 6 ? <span>+ {PLATFORMS.length - 6} more</span> : null}
             </div>
           </div>
+        </section>
+
+        {/* Tools showcase - every tool on the site, locked until sign-in */}
+        <section id="tools" className="mx-auto max-w-6xl px-4 pb-24">
+          <div className="text-center">
+            <h2 className="text-3xl font-bold tracking-tight">Everything for stock contributors</h2>
+            <p className="mt-3 text-slate-500 dark:text-slate-400">
+              {isAuthed
+                ? "Open any tool below and start working."
+                : "Sign in to unlock every tool - browsing stays free."}
+            </p>
+          </div>
+
+          <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {/* Featured: Metadata Generator */}
+            <ToolCard
+              href="/generator"
+              title="AI Metadata Generator"
+              description="Upload images and get platform-ready titles, descriptions and keywords for Adobe, Shutterstock, Freepik and more."
+              icon="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"
+              badge={isAuthed ? "Core tool" : null}
+              locked={!isAuthed}
+              featured
+            />
+            {TOOLS.filter((t) => t.status === "live").map((tool) => (
+              <ToolCard
+                key={tool.slug}
+                href={tool.href}
+                title={tool.title}
+                description={tool.description}
+                icon={tool.icon}
+                locked={!isAuthed}
+              />
+            ))}
+          </div>
+
+          {!isAuthed ? (
+            <p className="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
+              Tools require an authorized account.{" "}
+              <Link href="/login" className="font-semibold text-brand hover:underline">
+                Sign in
+              </Link>{" "}
+              to open them.
+            </p>
+          ) : null}
         </section>
 
         {/* Features */}
@@ -89,7 +155,7 @@ export default async function HomePage() {
           <div className="mx-auto max-w-6xl px-4 py-20">
             <h2 className="text-center text-3xl font-bold tracking-tight">How it works</h2>
             <p className="mt-3 text-center text-slate-500 dark:text-slate-400">
-              Three steps from raw images to upload-ready metadata.
+              Three steps from raw files to upload-ready output.
             </p>
             <ol className="mt-12 grid gap-6 sm:grid-cols-3 relative">
               <div aria-hidden className="hidden sm:block absolute top-8 left-[16%] right-[16%] h-px bg-gradient-to-r from-transparent via-brand/40 to-transparent" />
@@ -99,7 +165,7 @@ export default async function HomePage() {
                     {i + 1}
                   </span>
                   <h3 className="font-semibold">{step.title}</h3>
-                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{step.body}</p>
+                  <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{step.body}</p>
                 </li>
               ))}
             </ol>
@@ -107,10 +173,10 @@ export default async function HomePage() {
             {/* CTA */}
             <div className="mt-16 text-center">
               <Link
-                href="/generator"
+                href={isAuthed ? "/generator" : "/login"}
                 className="inline-flex items-center gap-2 rounded-xl bg-brand px-8 py-4 font-semibold text-white shadow-lg shadow-brand/25 hover:shadow-brand/40 hover:-translate-y-0.5 transition-all"
               >
-                Start Generating - It&apos;s Free
+                {isAuthed ? "Start Generating - It's Free" : "Sign in to get started"}
               </Link>
             </div>
           </div>
@@ -121,16 +187,80 @@ export default async function HomePage() {
   );
 }
 
+function ToolCard({
+  href,
+  title,
+  description,
+  icon,
+  locked,
+  featured,
+  badge,
+}: {
+  href: string;
+  title: string;
+  description: string;
+  icon: string;
+  locked: boolean;
+  featured?: boolean;
+  badge?: string | null;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`group relative flex flex-col rounded-2xl border bg-surface dark:bg-surface p-6 transition-all hover:-translate-y-0.5 ${
+        featured
+          ? "border-brand/40 sm:col-span-2 lg:col-span-1 shadow-sm hover:shadow-lg hover:shadow-brand/5"
+          : "border-slate-200 dark:border-slate-800 hover:border-brand/40 hover:shadow-lg hover:shadow-brand/5"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-brand/10 text-brand">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} className="h-6 w-6">
+            <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
+          </svg>
+        </span>
+        {locked ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-900/40 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="h-3 w-3">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+            </svg>
+            Login required
+          </span>
+        ) : badge ? (
+          <span className="rounded-full bg-brand/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-brand">
+            {badge}
+          </span>
+        ) : (
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            className="h-4 w-4 shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-brand"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+          </svg>
+        )}
+      </div>
+      <h3 className="mt-4 font-semibold">{title}</h3>
+      <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-400">{description}</p>
+      <span className="mt-4 text-xs font-semibold text-brand">
+        {locked ? "Sign in to open" : "Open tool"} →
+      </span>
+    </Link>
+  );
+}
+
 function FeatureIcon({ index }: { index: number }) {
   const paths = [
     // sparkles
-    "M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z",
+    "M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z",
     // queue/list
     "M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z",
     // download
     "M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3",
     // cpu/bolt
-    "M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z",
+    "M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5Z",
   ];
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} className="h-5 w-5">

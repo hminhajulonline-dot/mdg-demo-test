@@ -5,7 +5,7 @@ import Dropzone from "@/components/generator/Dropzone";
 import ResultCard, { formatFileSize, type CardItem } from "@/components/generator/ResultCard";
 import ControlsPanel from "@/components/generator/ControlsPanel";
 import ApiKeysModal from "@/components/generator/ApiKeysModal";
-import SuccessModal from "@/components/generator/SuccessModal";
+import SuccessModal, { isSuccessModalHidden } from "@/components/generator/SuccessModal";
 import FallbackToast from "@/components/generator/FallbackToast";
 import { prepareImage, prepareVideoFrame } from "@/lib/client/image";
 import { detectVector, prepareSvg, preparePostScript } from "@/lib/client/vector";
@@ -34,6 +34,7 @@ import {
   QUOTA_REHAB_MS,
 } from "@/lib/client/apiKeys";
 import { getProvider, PROVIDERS } from "@/lib/ai/providers";
+import { DREAMSTIME_LIMITS } from "@/lib/csv/dreamstimeRules";
 import { buildCSV, buildPromptTxt, buildPromptCsv, type CsvRow } from "@/lib/csv/formats";
 import type { GeneratorSettings, GeneratorUserSettings, GeneratedMetadata } from "@/lib/types";
 
@@ -42,6 +43,16 @@ const VIDEO_MIME = ["video/mp4", "video/quicktime", "video/webm", "video/x-m4v"]
 const VIDEO_EXT = ["mp4", "mov", "m4v", "webm"];
 const VECTOR_EXT = ["svg", "ai", "eps", "pdf"];
 const EXPORT_EXTS = ["", "eps", "ai", "svg", "jpg", "jpeg", "png", "psd"];
+const EXPORT_FORMAT_LABELS: Record<string, string> = {
+  "": "Original extension",
+  eps: "EPS",
+  ai: "AI",
+  svg: "SVG",
+  jpg: "JPG",
+  jpeg: "JPEG",
+  png: "PNG",
+  psd: "PSD",
+};
 
 /** Parallel generation workers (CSV Tree runs ~3 concurrent items). */
 const QUEUE_CONCURRENCY = 3;
@@ -76,6 +87,10 @@ function providerDisplayName(id: string): string {
   return PROVIDERS.find((p) => p.id === id)?.name ?? id;
 }
 
+function StatsSep() {
+  return <span className="text-slate-300 dark:text-slate-600">|</span>;
+}
+
 /**
  * Rasterizes a vector file in the background right after upload so the card
  * shows artwork immediately instead of waiting for generation. Failures leave
@@ -108,15 +123,20 @@ function warmVectorPreview(
           it.id === id && !it.prepBase64
             ? {
                 ...it,
+                thumbLoading: false,
                 previewUrl: `data:image/jpeg;base64,${prep.base64}`,
                 prepBase64: prep.base64,
                 prepMime: prep.mimeType,
+                prepPlaceholder: prep.placeholder || undefined,
               }
             : it
         )
       );
     } catch {
       // Keep the placeholder; callGenerate will attempt rasterization again.
+      setItems((prev) =>
+        prev.map((x) => (x.id === id ? { ...x, thumbLoading: false } : x))
+      );
     }
   })();
 }
@@ -134,6 +154,8 @@ interface WorkItem extends CardItem {
   /** Cached vector rasterization from the upload-time preview pass. */
   prepBase64?: string;
   prepMime?: string;
+  /** Vector had no renderable preview - generation runs from the filename. */
+  prepPlaceholder?: boolean;
 }
 
 interface Stats {
@@ -167,30 +189,34 @@ export default function GeneratorWorkbench({
   const [showSuccess, setShowSuccess] = useState(false);
   const [fallbackMsg, setFallbackMsg] = useState<string | null>(null);
   const [stats, setStats] = useState<Stats>({ done: 0, total: 0, success: 0, failed: 0 });
-  const [etaSec, setEtaSec] = useState(0);
   const [elapsedSec, setElapsedSec] = useState(0);
+  /** Keeps the live stats strip visible 3s after a batch finishes. */
+  const [showResultBar, setShowResultBar] = useState(false);
   const idCounter = useRef(0);
   const abortRef = useRef({ aborted: false });
   /** Failed-pass count per item id (drives the 3-pass auto-retry). */
   const retryCountRef = useRef<Map<string, number>>(new Map());
   const batchStartRef = useRef(0);
 
-  // Live ETA + elapsed ticker while a batch runs.
+  // Live elapsed ticker while a batch runs.
   useEffect(() => {
     if (!running) return;
     const tick = () => {
       if (batchStartRef.current) {
-        const elapsedMs = nowMs() - batchStartRef.current;
-        setElapsedSec(Math.round(elapsedMs / 1000));
-        if (stats.done > 0 && stats.total > stats.done) {
-          const perDoneMs = elapsedMs / stats.done;
-          setEtaSec(Math.round((perDoneMs / 1000) * (stats.total - stats.done)));
-        }
+        setElapsedSec(Math.round((nowMs() - batchStartRef.current) / 1000));
       }
     };
     const t = setInterval(tick, 1000);
     return () => clearInterval(t);
-  }, [running, stats.done, stats.total]);
+  }, [running]);
+
+  // Auto-hide the result stats strip 3s after processing finishes.
+  useEffect(() => {
+    if (!running && showResultBar) {
+      const t = setTimeout(() => setShowResultBar(false), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [running, showResultBar]);
 
   // Deep-links: ?mode=img2prompt and ?keys=1 (once per mount).
   useEffect(() => {
@@ -204,8 +230,33 @@ export default function GeneratorWorkbench({
         if (params.get("keys") === "1") setShowApiKeys(true);
       } catch {}
     }, 0);
-    return () => clearTimeout(t);
+      return () => clearTimeout(t);
   }, []);
+
+  // When the export platform is Dreamstime, apply its contributor limits
+  // (title 5-130 chars, description 50-250 chars, keywords 7-80). Switching
+  // away restores the standard defaults - CSV Tree's "different rules flow".
+  useEffect(() => {
+    if (platform === "dreamstime") {
+      setUserSettings({
+        titleLengthMin: DREAMSTIME_LIMITS.titleMin,
+        titleLengthMax: DREAMSTIME_LIMITS.titleMax,
+        keywordsCountMin: DREAMSTIME_LIMITS.kwMin,
+        keywordsCountMax: DREAMSTIME_LIMITS.kwMax,
+        descriptionLengthMin: DREAMSTIME_LIMITS.descMin,
+        descriptionLengthMax: DREAMSTIME_LIMITS.descMax,
+      });
+    } else {
+      setUserSettings({
+        titleLengthMin: 40,
+        titleLengthMax: 100,
+        keywordsCountMin: 20,
+        keywordsCountMax: 30,
+        descriptionLengthMin: 12,
+        descriptionLengthMax: 30,
+      });
+    }
+  }, [platform]);
 
   function update<K extends keyof GeneratorUserSettings>(
     key: K,
@@ -248,7 +299,7 @@ export default function GeneratorWorkbench({
 
       const built: WorkItem[] = slice.map((file) => {
         const fileUrl = URL.createObjectURL(file);
-        const vector = detectVector(file.name) !== null;
+        const vector = detectVector(file.name);
         return {
           id: `img_${nowMs()}_${idCounter.current++}`,
           filename: file.name,
@@ -259,9 +310,11 @@ export default function GeneratorWorkbench({
           keywords: [],
           category: "",
           promptText: undefined,
-          // Vectors have no native browser preview - placeholder tile while
-          // warmVectorPreview rasterizes them in the background.
-          previewUrl: vector ? "" : fileUrl,
+          // SVG renders natively in the browser - instant full-opacity
+          // preview (CSV Tree parity). AI/EPS/PDF show a "Rendering EPS…"
+          // tile until warmVectorPreview rasterizes them.
+          previewUrl: vector === "postscript" ? "" : fileUrl,
+          thumbLoading: vector === "postscript" || undefined,
           fileUrl,
           fileType: file.type || file.name.slice(file.name.lastIndexOf(".") + 1),
           fileSize: file.size,
@@ -315,11 +368,13 @@ export default function GeneratorWorkbench({
     // Vectors (SVG/AI/EPS/PDF) are rasterized locally; rasters downscaled;
     // videos reduced to a representative frame. The rendered artwork becomes
     // the card preview immediately.
-    let prepared;
+    let prepared: { base64: string; mimeType: string; placeholder?: boolean };
+    let isPlaceholder = false;
     const vectorKind = detectVector(item.filename);
     if (item.prepBase64) {
       // Upload-time preview pass already rasterized this vector - reuse it.
       prepared = { base64: item.prepBase64, mimeType: item.prepMime || "image/jpeg" };
+      isPlaceholder = item.prepPlaceholder === true;
       updateItem(item.id, {
         previewUrl: `data:image/jpeg;base64,${prepared.base64}`,
       });
@@ -334,6 +389,7 @@ export default function GeneratorWorkbench({
         new File([blob], item.filename, { type: "application/postscript" }),
         ext
       );
+      isPlaceholder = prepared.placeholder === true;
       updateItem(item.id, {
         previewUrl: `data:image/jpeg;base64,${prepared.base64}`,
       });
@@ -363,7 +419,10 @@ export default function GeneratorWorkbench({
     const payloadBase = {
       filename: item.filename,
       mimeType: prepared.mimeType,
-      imageBase64: prepared.base64,
+      // CSV Tree parity: a vector with no renderable preview sends NO image
+      // - the server generates metadata from the filename instead of failing.
+      imageBase64: isPlaceholder ? "" : prepared.base64,
+      ...(isPlaceholder ? { placeholder: true } : {}),
       // Original on-disk type: PNGs keep their transparent-background
       // phrasing even after canvas compression to JPEG.
       pngSource: item.fileType === "image/png",
@@ -375,6 +434,8 @@ export default function GeneratorWorkbench({
         mode: item.mode,
         prefix: user.usePrefix ? user.prefix : "",
         suffix: user.useSuffix ? user.suffix : "",
+        descPrefix: user.useDescPrefix ? user.descPrefix : "",
+        descSuffix: user.useDescSuffix ? user.descSuffix : "",
         negativeTitleWords: user.useNegativeTitle ? user.negativeTitleWords : "",
         negativeKeywords: user.useNegativeKeywords ? user.negativeKeywords : "",
         negativePromptWords: user.useNegativePrompt ? user.negativePromptWords : "",
@@ -388,6 +449,10 @@ export default function GeneratorWorkbench({
       attempts.length > 0
         ? attempts.map((a) => ({ providerId: a.providerId, keyValue: a.keyValue }))
         : [null]; // null = server env key
+
+    // In-browser compression result (base64 -> bytes) for the card's
+    // "2.5 MB → 512 KB" info, mirroring CSV Tree's onCompressed hook.
+    updateItem(item.id, { compressedSize: Math.round(prepared.base64.length * 0.75) });
 
     let lastError = "Generation failed.";
     for (let i = 0; i < queue.length; i++) {
@@ -420,6 +485,7 @@ export default function GeneratorWorkbench({
           updateItem(item.id, {
             status: "done",
             promptText: typeof json.prompt === "string" ? json.prompt : "",
+            bounds: json.bounds,
           });
         } else {
           const meta = (json.metadata ?? {}) as GeneratedMetadata;
@@ -432,6 +498,7 @@ export default function GeneratorWorkbench({
             categories: meta.categories,
             prompt: meta.prompt,
             baseModel: meta.baseModel,
+            bounds: json.bounds,
           });
         }
 
@@ -485,11 +552,18 @@ export default function GeneratorWorkbench({
     abortRef.current.aborted = false;
     setRunning(true);
 
+    // CSV Tree marks the whole batch "processing" up front so every queued
+    // card shows Generating... instead of sitting idle until its turn.
+    setItems((prev) =>
+      prev.map((it) =>
+        pendingIds.includes(it.id) ? { ...it, status: "processing", error: undefined } : it
+      )
+    );
+
     // Parallel worker pool - ~3x faster than sequential batches.
     const ids = [...pendingIds];
     const failedIds: string[] = [];
     let cursor = 0;
-    let anySuccess = false;
 
     async function worker() {
       while (cursor < ids.length && !abortRef.current.aborted) {
@@ -505,7 +579,6 @@ export default function GeneratorWorkbench({
         try {
           await callGenerate(item);
           ok = true;
-          anySuccess = true;
         } catch (err) {
           failedIds.push(id);
           retryCountRef.current.set(id, (retryCountRef.current.get(id) ?? 0) + 1);
@@ -555,8 +628,28 @@ export default function GeneratorWorkbench({
     }
 
     setRunning(false);
-    if (!abortRef.current.aborted && anySuccess) {
-      setShowSuccess(true);
+    if (abortRef.current.aborted) {
+      // Settle: rows that never started go back to pending so the batch can
+      // be resumed (CSV Tree clears the processing flag the same way).
+      setItems((prev) =>
+        prev.map((it) => (it.status === "processing" ? { ...it, status: "pending" } : it))
+      );
+      setFallbackMsg("Stopped. Partial results kept.");
+      return;
+    }
+    // CSV Tree only surfaces the success popup on a FULL batch; partial
+    // success / total failure report through the toast instead.
+    const total = pendingIds.length;
+    const success = total - failedIds.length;
+    if (total > 0 && success === total) {
+      setFallbackMsg(`Generated ${success}/${total}.`);
+      if (!isSuccessModalHidden()) setShowSuccess(true);
+    } else if (success > 0) {
+      setFallbackMsg(
+        `Generated ${success}/${total}. ${total - success} still failed after auto-retries.`
+      );
+    } else {
+      setFallbackMsg("All generations failed. Check API keys.");
     }
   }
 
@@ -565,9 +658,9 @@ export default function GeneratorWorkbench({
     const pending = items.filter((i) => i.status === "pending");
     if (pending.length === 0) return;
     batchStartRef.current = nowMs();
-    setEtaSec(0);
     setElapsedSec(0);
     setStats({ done: 0, total: pending.length, success: 0, failed: 0 });
+    setShowResultBar(true);
     setShowSuccess(false);
     void runQueue(pending.map((i) => i.id));
   }
@@ -583,7 +676,7 @@ export default function GeneratorWorkbench({
 
   function stop() {
     abortRef.current.aborted = true;
-    setFallbackMsg("Stopped. Partial results kept.");
+    setFallbackMsg("Stopping after current jobs...");
   }
 
   /** Manual bulk retry of every failed card (independent of auto-retry). */
@@ -593,9 +686,9 @@ export default function GeneratorWorkbench({
     if (failed.length === 0) return;
     for (const f of failed) updateItem(f.id, { status: "pending", error: undefined });
     batchStartRef.current = nowMs();
-    setEtaSec(0);
     setElapsedSec(0);
     setStats({ done: 0, total: failed.length, success: 0, failed: 0 });
+    setShowResultBar(true);
     setShowSuccess(false);
     void runQueue(failed.map((f) => f.id));
   }
@@ -647,12 +740,12 @@ export default function GeneratorWorkbench({
 
   function exportPromptsTxt() {
     if (!canExport) return;
-    download(buildPromptTxt(exportRows()), "all-prompts.txt", "text/plain;charset=utf-8");
+    download(buildPromptTxt(exportRows()), "prompts.txt", "text/plain;charset=utf-8");
   }
 
   function exportPromptsCsv() {
     if (!canExport) return;
-    download(buildPromptCsv(exportRows()), "all-prompts.csv", "text/csv;charset=utf-8");
+    download(buildPromptCsv(exportRows()), "prompts.csv", "text/csv;charset=utf-8");
   }
 
   const isPromptMode = user.mode === "img2prompt";
@@ -677,7 +770,9 @@ export default function GeneratorWorkbench({
             <div className="min-w-0">
               <p className="text-sm font-bold">Controls</p>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                {providerName ? `Provider: ${providerName}` : "No keys - using server AI"}
+                {providerName
+                  ? `Provider: ${providerDisplayName(providerName)}`
+                  : "No keys - using server AI"}
               </p>
             </div>
             <button
@@ -698,15 +793,47 @@ export default function GeneratorWorkbench({
 
         {/* Main column - cards fill the remaining space */}
         <section className="flex-1 min-w-0 px-4 sm:px-6 py-6 space-y-5">
-          {/* Toolbar */}
+          {/* Toolbar - stats strip + actions (CSV Tree layout) */}
           <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-surface dark:bg-surface shadow-sm p-3 flex flex-wrap items-center gap-2">
-            <button
-              onClick={generateAll}
-              disabled={running || !items.some((i) => i.status === "pending")}
-              className="rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 disabled:opacity-40 transition-opacity"
-            >
-              {running ? `Generating… (${stats.done}/${stats.total})` : "Generate All"}
-            </button>
+            {/* Merged stats strip: live while running, 3s after a batch. */}
+            <div className="mr-auto flex flex-wrap items-center gap-x-1.5 text-[11px] leading-tight">
+              {running || showResultBar ? (
+                <>
+                  <span className="font-semibold text-slate-700 dark:text-slate-200">
+                    Processing: {stats.done}/{stats.total}
+                  </span>
+                  <StatsSep />
+                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                    Success: {stats.success}
+                  </span>
+                  <StatsSep />
+                  <span className={stats.failed ? "font-semibold text-red-500" : "text-slate-500"}>
+                    Failed: {stats.failed}
+                  </span>
+                  <StatsSep />
+                  <span className="font-semibold text-blue-600 dark:text-blue-400 tabular-nums">
+                    {Math.floor(elapsedSec / 60)}m {elapsedSec % 60}s
+                  </span>
+                  {stats.done > 0 ? (
+                    <>
+                      <StatsSep />
+                      <span className="font-semibold text-purple-600 dark:text-purple-400 tabular-nums">
+                        ~{(elapsedSec / stats.done).toFixed(1)}s/file
+                      </span>
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold text-slate-700 dark:text-slate-200">
+                    {items.length} file{items.length === 1 ? "" : "s"} ready
+                  </span>
+                  <StatsSep />
+                  <span className="text-slate-500">Total: {formatFileSize(totalBytes)}</span>
+                </>
+              )}
+            </div>
+
             {running ? (
               <button
                 onClick={stop}
@@ -714,40 +841,64 @@ export default function GeneratorWorkbench({
               >
                 Stop
               </button>
-            ) : null}
+            ) : (
+              <button
+                onClick={clearAll}
+                disabled={items.length === 0}
+                className="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+              >
+                Clear All
+              </button>
+            )}
+            <button
+              onClick={generateAll}
+              disabled={running || !items.some((i) => i.status === "pending")}
+              className="rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 disabled:opacity-40 transition-opacity"
+            >
+              {running
+                ? "Processing..."
+                : `Generate All (${items.filter((i) => i.status === "pending").length})`}
+            </button>
             {!running && errorCount > 0 ? (
               <button
                 onClick={retryFailed}
                 className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+                title="Re-run only the files that failed last time"
               >
                 Retry Failed ({errorCount})
               </button>
             ) : null}
+            {!isPromptMode ? (
+              <label
+                className="inline-flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400 ml-auto"
+                title="Rewrites every exported filename to this extension"
+              >
+                File ext
+                <select
+                  value={exportExt}
+                  onChange={(e) => persistExportExt(e.target.value)}
+                  className="rounded-lg border border-slate-300 dark:border-slate-700 bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand/50"
+                >
+                  {EXPORT_EXTS.map((e) => (
+                    <option key={e || "orig"} value={e}>
+                      {EXPORT_FORMAT_LABELS[e] ?? e}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <button
-              onClick={clearAll}
-              disabled={running || items.length === 0}
-              className="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
+              onClick={isPromptMode ? exportPromptsTxt : exportCsv}
+              disabled={!canExport}
+              title={
+                isPromptMode
+                  ? "Download all prompts as a .txt file"
+                  : `Export CSV for ${platform}`
+              }
+              className="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
             >
-              Clear All
+              {isPromptMode ? "Export TXT" : "Export CSV"}
             </button>
-            {items.length > 0 ? (
-              <span className="text-xs font-medium text-slate-400">
-                Total: {formatFileSize(totalBytes)}
-              </span>
-            ) : null}
-            {running ? (
-              <span className="ml-auto text-xs font-medium text-slate-500 tabular-nums">
-                {stats.done}/{stats.total} done · {elapsedSec}s elapsed
-                {stats.done > 0 ? ` · ${(elapsedSec / stats.done).toFixed(1)}s/file` : ""}
-                {etaSec > 0 ? ` · ~${etaSec}s left` : ""}
-              </span>
-            ) : null}
-            {!running && stats.total > 0 ? (
-              <span className="ml-auto text-xs font-medium text-slate-500">
-                {stats.success}/{stats.total} succeeded
-                {stats.failed ? ` · ${stats.failed} failed` : ""}
-              </span>
-            ) : null}
           </div>
 
           {/* Dropzone */}
@@ -776,46 +927,6 @@ export default function GeneratorWorkbench({
               ))}
             </div>
           )}
-
-          {/* Export bar */}
-          {items.length > 0 ? (
-            <div className="sticky bottom-4 z-30 rounded-xl border border-slate-200 dark:border-slate-800 bg-background/95 backdrop-blur shadow-lg p-3 flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium">
-                Export ({isPromptMode ? items.filter((i) => i.promptText).length : doneItems.length} ready):
-              </span>
-              <button
-                onClick={exportCsv}
-                disabled={!canExport}
-                className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-40 transition-opacity"
-              >
-                Download CSV
-              </button>
-              {isPromptMode ? (
-                <button
-                  onClick={exportPromptsTxt}
-                  disabled={!canExport}
-                  className="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-40 transition-colors"
-                >
-                  Prompts .TXT
-                </button>
-              ) : (
-                <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 ml-auto">
-                  Filename ext.
-                  <select
-                    value={exportExt}
-                    onChange={(e) => persistExportExt(e.target.value)}
-                    className="rounded-lg border border-slate-300 dark:border-slate-700 bg-background px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand/50"
-                  >
-                    {EXPORT_EXTS.map((e) => (
-                      <option key={e || "orig"} value={e}>
-                        {e || "original"}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-          ) : null}
         </section>
       </div>
 

@@ -1,3 +1,5 @@
+import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   ALL_PROVIDER_IDS,
@@ -8,18 +10,96 @@ import {
 } from "@/lib/types";
 
 /**
+ * Performance notes:
+ * - The raw row reads are wrapped in unstable_cache (60s + a tag) so a
+ *   page navigation costs ZERO database queries once warm.
+ * - Admin save routes call revalidateTag(SITE_SETTINGS_TAG, "max") after
+ *   writing, so changes appear on the next request (stale-while-revalidate).
+ * - The exported getters are wrapped in React cache(), so the root
+ *   layout, header and footer share ONE read per request instead of
+ *   each hitting the (possibly stale) cache separately.
+ */
+
+export const SITE_SETTINGS_TAG = "site-settings";
+export const GENERATOR_SETTINGS_TAG = "generator-settings";
+
+interface SiteRow {
+  site_name?: string;
+  site_description?: string;
+  logo_url?: string | null;
+  favicon_url?: string | null;
+  footer_text?: string;
+  primary_color?: string;
+  secondary_color?: string;
+  theme_mode?: string;
+  hero_badge?: string;
+  hero_title?: string;
+  hero_subtitle?: string;
+  about_title?: string;
+  about_body?: string;
+  features?: unknown;
+  steps?: unknown;
+  enabled_providers?: unknown;
+}
+
+interface GeneratorRow {
+  title_length_min?: number;
+  title_length_max?: number;
+  description_words_min?: number;
+  description_words_max?: number;
+  keywords_count_min?: number;
+  keywords_count_max?: number;
+  include_category?: boolean;
+  categories?: unknown;
+  language?: string;
+  custom_prompt?: string;
+  max_images_per_batch?: number;
+  rate_limit_per_hour?: number;
+}
+
+const readSiteRow = unstable_cache(
+  async (): Promise<SiteRow | null> => {
+    try {
+      const admin = createAdminClient();
+      const { data } = await admin
+        .from("site_settings")
+        .select("*")
+        .eq("id", 1)
+        .maybeSingle();
+      return (data as SiteRow | null) ?? null;
+    } catch {
+      return null;
+    }
+  },
+  ["site-settings-row"],
+  { revalidate: 60, tags: [SITE_SETTINGS_TAG] }
+);
+
+const readGeneratorRow = unstable_cache(
+  async (): Promise<GeneratorRow | null> => {
+    try {
+      const admin = createAdminClient();
+      const { data } = await admin
+        .from("generator_settings")
+        .select("*")
+        .eq("id", 1)
+        .maybeSingle();
+      return (data as GeneratorRow | null) ?? null;
+    } catch {
+      return null;
+    }
+  },
+  ["generator-settings-row"],
+  { revalidate: 60, tags: [GENERATOR_SETTINGS_TAG] }
+);
+
+/**
  * Load site settings with hard defaults as a fallback so the site still
  * renders even before Supabase is configured (first-run DX).
  */
-export async function getSiteSettings(): Promise<SiteSettings> {
+export const getSiteSettings = cache((): Promise<SiteSettings> => {
   const d = DEFAULT_SITE_SETTINGS;
-  try {
-    const admin = createAdminClient();
-    const { data } = await admin
-      .from("site_settings")
-      .select("*")
-      .eq("id", 1)
-      .maybeSingle();
+  return readSiteRow().then((data) => {
     if (!data) return d;
     return {
       site_name: data.site_name || d.site_name,
@@ -29,7 +109,7 @@ export async function getSiteSettings(): Promise<SiteSettings> {
       footer_text: data.footer_text || d.footer_text,
       primary_color: data.primary_color || d.primary_color,
       secondary_color: data.secondary_color || d.secondary_color,
-      theme_mode: (["light", "dark", "system"].includes(data.theme_mode)
+      theme_mode: (["light", "dark", "system"].includes(data.theme_mode || "")
         ? data.theme_mode
         : "system") as SiteSettings["theme_mode"],
       hero_badge: data.hero_badge || d.hero_badge,
@@ -41,10 +121,8 @@ export async function getSiteSettings(): Promise<SiteSettings> {
       steps: parseBlocks(data.steps, d.steps),
       enabled_providers: parseProviders(data.enabled_providers),
     };
-  } catch {
-    return d;
-  }
-}
+  });
+});
 
 function parseProviders(value: unknown): string[] {
   if (!Array.isArray(value)) return [...ALL_PROVIDER_IDS];
@@ -63,15 +141,9 @@ function parseBlocks(value: unknown, fallback: { title: string; body: string }[]
   return blocks.length > 0 ? blocks : fallback;
 }
 
-export async function getGeneratorSettings(): Promise<GeneratorSettings> {
+export const getGeneratorSettings = cache((): Promise<GeneratorSettings> => {
   const fallback = DEFAULT_GENERATOR_SETTINGS;
-  try {
-    const admin = createAdminClient();
-    const { data } = await admin
-      .from("generator_settings")
-      .select("*")
-      .eq("id", 1)
-      .maybeSingle();
+  return readGeneratorRow().then((data) => {
     if (!data) return fallback;
     return {
       title_length_min: clampInt(data.title_length_min, 10, 300, fallback.title_length_min),
@@ -89,10 +161,8 @@ export async function getGeneratorSettings(): Promise<GeneratorSettings> {
       max_images_per_batch: clampInt(data.max_images_per_batch, 1, 200, fallback.max_images_per_batch),
       rate_limit_per_hour: clampInt(data.rate_limit_per_hour, 0, 100000, fallback.rate_limit_per_hour),
     };
-  } catch {
-    return fallback;
-  }
-}
+  });
+});
 
 function clampInt(value: unknown, min: number, max: number, dflt: number): number {
   const n = Number(value);

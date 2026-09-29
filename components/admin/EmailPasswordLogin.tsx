@@ -78,7 +78,9 @@ export default function EmailPasswordLogin({ next }: { next?: string }) {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || `Login failed (${res.status})`);
-      const target = next && next.startsWith("/") ? next : "/";
+      // Never route back to /login itself (avoids the post-login bounce).
+      const target =
+        next && next.startsWith("/") && !next.startsWith("/login") ? next : "/";
       router.replace(target);
       router.refresh();
     } catch (err) {

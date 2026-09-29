@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { requireAdminOrReturn } from "@/lib/api/guard";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { ADMIN_USERS_TAG } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -83,6 +85,7 @@ export async function POST(request: Request) {
       { onConflict: "user_id" }
     );
     if (error) throw error;
+    revalidateTag(ADMIN_USERS_TAG, "max");
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(
@@ -131,6 +134,7 @@ export async function PATCH(request: Request) {
       .update({ status, updated_at: new Date().toISOString() })
       .eq("id", id);
     if (error) throw error;
+    revalidateTag(ADMIN_USERS_TAG, "max");
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(
@@ -168,6 +172,7 @@ export async function DELETE(request: Request) {
     }
     const { error } = await admin.from("admin_users").delete().eq("id", id);
     if (error) throw error;
+    revalidateTag(ADMIN_USERS_TAG, "max");
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(

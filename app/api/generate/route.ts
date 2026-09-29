@@ -4,11 +4,16 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getGeneratorSettings, getSiteSettings } from "@/lib/settings";
 import { buildPrompt, type PromptOptions } from "@/lib/ai/prompts";
 import { generateWithAi } from "@/lib/ai/generate";
+import { DREAMSTIME_LIMITS } from "@/lib/csv/dreamstimeRules";
+import type { FieldBounds, ResultBounds } from "@/lib/types";
 import { hashIp, rateLimit } from "@/lib/rateLimit";
 import { assertLicenseIntegrity } from "@/lib/core/license";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Extension re-prompts (title/keywords undershoot) can stack 2-3 provider
+// calls per request; 300s gives them room instead of being killed at 60s
+// mid-generation (CSV Tree runs the same retries in-browser, uncapped).
+export const maxDuration = 300;
 
 const ALLOWED_MIME = new Set([
   "image/jpeg",
@@ -49,15 +54,54 @@ function clampBool(v: unknown): boolean {
   return v === true;
 }
 
+function fieldBounds(min: number, max: number, length: number): FieldBounds {
+  return { min, max, length, ok: length >= min && length <= max };
+}
+
+/** Badge bounds for the result card, mirroring CSV Tree's _meta flags. */
+function resultBounds(options: PromptOptions, outcome: Awaited<ReturnType<typeof generateWithAi>>): ResultBounds {
+  if (options.mode === "img2prompt") {
+    const len = (outcome.promptText ?? "").length;
+    return { prompt: fieldBounds(options.promptLengthMin, options.promptLengthMax, len) };
+  }
+  const m = outcome.metadata;
+  const bounds: ResultBounds = {
+    title: fieldBounds(options.titleLengthMin, options.titleLengthMax, m?.title.length ?? 0),
+    keywords: fieldBounds(options.keywordsCountMin, options.keywordsCountMax, m?.keywords.length ?? 0),
+  };
+  if (options.descriptionUnit === "chars") {
+    bounds.description = fieldBounds(
+      options.descriptionCharMin,
+      options.descriptionCharMax,
+      m?.description.length ?? 0
+    );
+  }
+  return bounds;
+}
+
 function buildOptions(body: Record<string, unknown>, s: Awaited<ReturnType<typeof getGeneratorSettings>>): PromptOptions {
   const u = (body.options ?? {}) as Record<string, unknown>;
 
-  const titleMin = clampNum(u.titleLengthMin, 10, 300) ?? s.title_length_min;
+  const platform =
+    typeof body.platform === "string" && /^[a-z0-9-]{1,30}$/.test(body.platform)
+      ? body.platform
+      : "general";
+  const isDream = platform === "dreamstime";
+
+  const titleMin = clampNum(u.titleLengthMin, 5, 300) ?? s.title_length_min;
   const titleMaxRaw = clampNum(u.titleLengthMax, 20, 300) ?? s.title_length_max;
   const titleMax = Math.max(titleMaxRaw, titleMin + 5);
 
   const kwMin = clampNum(u.keywordsCountMin, 3, 100) ?? s.keywords_count_min;
   const kwMax = Math.max(clampNum(u.keywordsCountMax, 5, 100) ?? s.keywords_count_max, kwMin);
+
+  // Description range: the visitor's slider wins within hard limits; admin
+  // description_words_* is the fallback when a client doesn't send one.
+  const descMin = clampNum(u.descriptionLengthMin, 1, 756) ?? s.description_words_min;
+  const descMax = Math.max(
+    clampNum(u.descriptionLengthMax, 1, 756) ?? s.description_words_max,
+    descMin + 1
+  );
 
   const pMin = clampNum(u.promptLengthMin, 50, 3000) ?? 300;
   const pMax = Math.max(clampNum(u.promptLengthMax, 100, 4000) ?? 700, pMin + 50);
@@ -71,14 +115,19 @@ function buildOptions(body: Record<string, unknown>, s: Awaited<ReturnType<typeo
   return {
     mode: mode as PromptOptions["mode"],
     vector,
-    platform: typeof body.platform === "string" && /^[a-z0-9-]{1,30}$/.test(body.platform)
-      ? body.platform
-      : "general",
+    platform,
     // metadata
     titleLengthMin: titleMin,
     titleLengthMax: titleMax,
-    descriptionWordsMin: s.description_words_min,
-    descriptionWordsMax: s.description_words_max,
+    descriptionWordsMin: descMin,
+    descriptionWordsMax: descMax,
+    descriptionUnit: isDream ? "chars" : "words",
+    // Char budget is clamped to Dreamstime's own ceiling so a stale stored
+    // setting can never exceed the platform limit.
+    descriptionCharMin: Math.max(1, descMin),
+    descriptionCharMax: Math.min(DREAMSTIME_LIMITS.descMax, descMax),
+    descPrefix: clampStr(u.descPrefix, 60),
+    descSuffix: clampStr(u.descSuffix, 60),
     keywordsCountMin: kwMin,
     keywordsCountMax: kwMax,
     includeCategory: s.include_category,
@@ -134,8 +183,11 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  // CSV Tree parity: a vector with no renderable preview sends NO image -
+  // metadata is generated from the filename instead of erroring the card.
+  const isPlaceholder = body.placeholder === true;
   let imageBase64 = typeof body.imageBase64 === "string" ? body.imageBase64 : "";
-  if (!imageBase64) {
+  if (!imageBase64 && !isPlaceholder) {
     return NextResponse.json({ error: "Missing image data." }, { status: 400 });
   }
   if (imageBase64.includes(",")) imageBase64 = imageBase64.slice(imageBase64.indexOf(",") + 1);
@@ -180,17 +232,27 @@ export async function POST(request: Request) {
   }
 
   const prompt = buildPrompt(options);
+  const filename = typeof body.filename === "string" ? body.filename.slice(0, 200) : "";
+  const finalPrompt = isPlaceholder
+    ? // Port of CSV Tree's filename-fallback note: without an image the model
+      // must infer subject/style from the filename instead of hallucinating
+      // against a blank placeholder tile.
+      `${prompt}\n\nNote: The file "${filename}" is a vector EPS/AI with no embedded raster preview, so no image is available. Generate metadata based on the filename "${filename
+        .replace(/\.[^.]+$/, "")
+        .replace(/[_-]+/g, " ")
+        .trim()}" — infer a plausible clean vector subject, style and keywords suitable for microstock. Keep it concise and stock-ready.`
+    : prompt;
 
   try {
     const outcome = await generateWithAi(
-      { imageBase64, mimeType, prompt },
+      { imageBase64, mimeType, prompt: finalPrompt },
       options,
       override
     );
 
     logUsage({
       ipHash: hashIp(clientIp(request)),
-      filename: typeof body.filename === "string" ? body.filename.slice(0, 200) : undefined,
+      filename: filename || undefined,
       success: true,
       provider: outcome.provider,
       model: outcome.model,
@@ -200,9 +262,15 @@ export async function POST(request: Request) {
     });
 
     if (options.mode === "img2prompt") {
-      return NextResponse.json({ prompt: outcome.promptText });
+      return NextResponse.json({
+        prompt: outcome.promptText,
+        bounds: resultBounds(options, outcome),
+      });
     }
-    return NextResponse.json({ metadata: outcome.metadata });
+    return NextResponse.json({
+      metadata: outcome.metadata,
+      bounds: resultBounds(options, outcome),
+    });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Generation failed unexpectedly.";

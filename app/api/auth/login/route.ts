@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { ADMIN_USERS_TAG } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -76,6 +78,7 @@ export async function POST(request: Request) {
         },
         { onConflict: "user_id" }
       );
+      revalidateTag(ADMIN_USERS_TAG, "max");
     } catch {
       // Non-fatal.
     }

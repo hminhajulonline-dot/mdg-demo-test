@@ -18,6 +18,12 @@ export interface PromptOptions {
   titleLengthMax: number;
   descriptionWordsMin: number;
   descriptionWordsMax: number;
+  /** "chars" for Dreamstime - the platform measures descriptions in characters. */
+  descriptionUnit: "words" | "chars";
+  descriptionCharMin: number;
+  descriptionCharMax: number;
+  descPrefix: string;
+  descSuffix: string;
   keywordsCountMin: number;
   keywordsCountMax: number;
   includeCategory: boolean;
@@ -98,10 +104,20 @@ function buildMetadata(o: PromptOptions): string {
   const kcMax = o.keywordsCountMax;
   const titleCharTarget = Math.round((tcMin + tcMax) / 2);
   const keywordTarget = Math.round((kcMin + kcMax) / 2);
+  // Word hint derived from the char budget (~6 chars per word) - the char
+  // bound is what we enforce, the word range lands the model closer first try.
+  const charsToWords = (chars: number) => Math.max(3, Math.min(20, Math.round(chars / 6)));
+  const titleWordMin = charsToWords(tcMin);
+  const titleWordMax = charsToWords(tcMax);
+  // Description budget: char mode (Dreamstime) uses the char sliders clamped
+  // to the platform ceiling; word mode uses the word sliders.
+  const descUnit = o.descriptionUnit === "chars" ? "chars" : "words";
+  const dMin = descUnit === "chars" ? o.descriptionCharMin : o.descriptionWordsMin;
+  const dMax = descUnit === "chars" ? o.descriptionCharMax : o.descriptionWordsMax;
 
   const schema = [
     `  "title": "descriptive title between ${tcMin} and ${tcMax} characters",`,
-    `  "description": "detailed description with ${o.descriptionWordsMin}-${o.descriptionWordsMax} words",`,
+    `  "description": "detailed description between ${dMin} and ${dMax} ${descUnit}",`,
     `  "keywords": ["keyword1", "keyword2", ...]`,
   ];
   if (o.includeCategory) {
@@ -125,9 +141,9 @@ ${schema.join("\n")}
 }
 
 Requirements:
-- Title (STRICT): MUST be between ${tcMin} and ${tcMax} characters long. Aim for around ${titleCharTarget} characters. Count characters carefully. Descriptive and SEO-friendly.
+- Title (STRICT): MUST be between ${tcMin} and ${tcMax} characters long. Aim for around ${titleCharTarget} characters. Count characters carefully. ~${titleWordMin}-${titleWordMax} words. Descriptive and SEO-friendly.
 - Keywords (STRICT): MUST return between ${kcMin} and ${kcMax} keywords. Aim for around ${keywordTarget} keywords. Each keyword should be 1-3 words${o.singleWordKw ? ", prefer single-word keywords where possible" : ""}. No duplicates.
-- Description: ${o.descriptionWordsMin} to ${o.descriptionWordsMax} words, natural and detailed${
+- Description: ${dMin} to ${dMax} ${descUnit}, natural and detailed${
     isFreepik
       ? `\n- Prompt: a single creative text-to-image prompt (under 250 characters) that captures the subject, style, lighting and composition\n- Base model: always set to "leonardo"`
       : ""
@@ -208,6 +224,11 @@ export function buildDefaultMetadataPrompt(s: GeneratorSettings, platform = "gen
     titleLengthMax: s.title_length_max,
     descriptionWordsMin: s.description_words_min,
     descriptionWordsMax: s.description_words_max,
+    descriptionUnit: "words",
+    descriptionCharMin: s.description_words_min,
+    descriptionCharMax: s.description_words_max,
+    descPrefix: "",
+    descSuffix: "",
     keywordsCountMin: s.keywords_count_min,
     keywordsCountMax: s.keywords_count_max,
     includeCategory: s.include_category,

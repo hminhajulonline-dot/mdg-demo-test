@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { getCardFields } from "@/lib/csv/formats";
+import { CARD_FIELD_LABELS, getCardFields, getPlatform } from "@/lib/csv/formats";
 import { validateDreamstime } from "@/lib/csv/dreamstimeRules";
-import type { GenerationMode } from "@/lib/types";
+import type { GenerationMode, ResultBounds } from "@/lib/types";
 
 export async function copyText(text: string): Promise<boolean> {
   try {
@@ -36,8 +36,14 @@ export interface CardItem {
   previewUrl?: string;
   /** Original file size in bytes. */
   fileSize?: number;
+  /** Bytes after in-browser compression (shown as "2.5 MB → 512 KB"). */
+  compressedSize?: number;
+  /** Bounds reported by the generator - drives the green/amber badges. */
+  bounds?: ResultBounds;
   /** Video file - preview plays inline instead of an <img>. */
   isVideo?: boolean;
+  /** Vector still rasterizing after upload - shows the "Rendering EPS…" tile. */
+  thumbLoading?: boolean;
   // metadata result
   title: string;
   description: string;
@@ -109,6 +115,21 @@ export default function ResultCard({ item, platform, isAIGenerated, onUpdate, on
 
   const busy = item.status === "processing" || item.status === "pending";
 
+  // Current values + configured bounds -> green/amber badge state. Computed
+  // from the live text so edits re-evaluate immediately (CSV Tree parity).
+  const tb = item.bounds?.title;
+  const tLen = item.title.length;
+  const tOk = !tb || (tLen >= tb.min && tLen <= tb.max);
+  const kb = item.bounds?.keywords;
+  const kCount = item.keywords.length;
+  const kOk = !kb || (kCount >= kb.min && kCount <= kb.max);
+  const db = item.bounds?.description;
+  const dLen = item.description.length;
+  const dOk = !db || (dLen >= db.min && dLen <= db.max);
+  const pb = item.bounds?.prompt;
+  const pLen = (item.promptText || "").length;
+  const pOk = !pb || (pLen >= pb.min && pLen <= pb.max);
+
   return (
     <div className="group rounded-2xl border border-slate-200 dark:border-slate-800 bg-surface dark:bg-surface shadow-sm hover:shadow-md hover:border-brand/40 transition-all overflow-hidden">
       {/* Header strip */}
@@ -119,7 +140,15 @@ export default function ResultCard({ item, platform, isAIGenerated, onUpdate, on
           </p>
           {item.fileSize ? (
             <span className="shrink-0 rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-bold text-slate-500 tabular-nums">
-              {formatFileSize(item.fileSize)}
+              Size: {formatFileSize(item.fileSize)}
+              {item.compressedSize && item.compressedSize !== item.fileSize ? (
+                <>
+                  {" → "}
+                  <span className="text-green-600 dark:text-green-400 font-semibold">
+                    {formatFileSize(item.compressedSize)}
+                  </span>
+                </>
+              ) : null}
             </span>
           ) : null}
         </div>
@@ -138,26 +167,23 @@ export default function ResultCard({ item, platform, isAIGenerated, onUpdate, on
               </IconBtn>
             </>
           )}
-          {busy && (
-            <span className="h-5 w-5 animate-spin rounded-full border-2 border-brand border-t-transparent" aria-label="Processing" />
-          )}
         </div>
       </div>
 
-      {/* Error banner */}
-      {item.status === "error" ? (
-        <div className="px-4 sm:px-5 py-4 bg-red-50 dark:bg-red-950/30 border-b border-red-100 dark:border-red-900/40">
-          <p className="text-sm text-red-700 dark:text-red-300 leading-relaxed">{item.error}</p>
-          <button onClick={onRegenerate} className="mt-2 text-xs font-semibold text-brand hover:underline">
-            Try again →
-          </button>
-        </div>
-      ) : (
-        /* Two-column body: preview half + data half */
-        <div className="grid md:grid-cols-2 gap-0 divide-y md:divide-y-0 md:divide-x divide-slate-100 dark:border-slate-800 md:dark:divide-slate-800">
-          {/* LEFT HALF - preview */}
-          <div className="relative min-h-[220px] bg-white dark:bg-slate-900/60 flex items-center justify-center p-3">
-            {item.previewUrl && item.isVideo ? (
+      {/* Two-column body: preview half + data half. The preview is NEVER
+          dimmed or hidden - CSV Tree keeps the artwork at full opacity from
+          upload through generation, error and retry. */}
+      <div className="grid md:grid-cols-2 gap-0 divide-y md:divide-y-0 md:divide-x divide-slate-100 dark:border-slate-800 md:dark:divide-slate-800">
+        {/* LEFT HALF - preview */}
+        <div className="relative min-h-[220px] bg-white dark:bg-slate-900/60 flex items-center justify-center p-3">
+          {item.thumbLoading ? (
+            <div className="text-center">
+              <span className="inline-flex h-8 w-8 animate-spin rounded-full border-[3px] border-brand border-t-transparent mb-2" />
+              <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                Rendering EPS…
+              </p>
+            </div>
+          ) : item.previewUrl && item.isVideo ? (
               <video
                 src={item.previewUrl}
                 controls
@@ -187,63 +213,106 @@ export default function ResultCard({ item, platform, isAIGenerated, onUpdate, on
                 <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">Vector file</p>
               </div>
             )}
-            {busy ? (
-              <span className="absolute inset-0 rounded-lg bg-background/60 backdrop-blur-[1px] grid place-items-center">
-                <span className="h-8 w-8 animate-spin rounded-full border-[3px] border-brand border-t-transparent" />
-              </span>
-            ) : null}
           </div>
 
-          {/* RIGHT HALF - data */}
+          {/* RIGHT HALF - data - mirrors CSV Tree: "Generating..." and the
+              error box live here while the preview stays untouched. */}
           <div className="px-4 sm:px-5 py-4 space-y-3">
-            {item.mode === "img2prompt" ? (
-              <Field
-                label={`Prompt (${(item.promptText || "").length} chars)`}
-                value={item.promptText || ""}
-                rows={8}
-                disabled={busy}
-                onChange={(v) => onUpdate({ promptText: v })}
-                onCopy={() => doCopy("prompt", item.promptText || "")}
-                copied={copied === "prompt"}
-              />
+            {item.status === "error" ? (
+              <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-4 py-3">
+                <p className="text-sm font-semibold text-red-600 dark:text-red-400 mb-1">
+                  Generation failed
+                </p>
+                <p className="text-xs text-red-700 dark:text-red-300 leading-relaxed">{item.error}</p>
+                <button onClick={onRegenerate} className="mt-2 text-xs font-semibold text-brand hover:underline">
+                  Try again →
+                </button>
+              </div>
+            ) : item.status === "processing" ? (
+              <div className="h-full flex items-center justify-center text-slate-500 py-10">
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent mr-2" />
+                Generating...
+              </div>
+            ) : item.mode === "img2prompt" ? (
+              <div>
+                <Field
+                  label={`Creative Prompt (${pLen} chars)`}
+                  value={item.promptText || ""}
+                  rows={8}
+                  disabled={busy}
+                  onChange={(v) => onUpdate({ promptText: v })}
+                  onCopy={() => doCopy("prompt", item.promptText || "")}
+                  copied={copied === "prompt"}
+                />
+                {pb ? (
+                  <BoundsBadge current={pLen} unit="chars" min={pb.min} max={pb.max} ok={pOk} />
+                ) : null}
+              </div>
             ) : (
               <>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 mb-2 flex items-center gap-1.5">
+                  <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-bold uppercase tracking-wider">
+                    {getPlatform(platform).name}
+                  </span>
+                  <span className="truncate">
+                    format · {fields.map((f) => CARD_FIELD_LABELS[f] || f).join(" · ")}
+                  </span>
+                </p>
                 {showTitle ? (
-                  <Field
-                    label={`Title · ${item.title.length}/${platform === "freepik" ? 250 : 100}`}
-                    value={item.title}
-                    rows={2}
-                    disabled={busy}
-                    onChange={(v) => onUpdate({ title: v })}
-                    onCopy={() => doCopy("title", item.title)}
-                    copied={copied === "title"}
-                  />
+                  <div>
+                    <Field
+                      label={
+                        tb
+                          ? `Title (${tLen} chars)`
+                          : `Title · ${tLen}/${platform === "freepik" ? 250 : 100}`
+                      }
+                      value={item.title}
+                      rows={2}
+                      disabled={busy}
+                      onChange={(v) => onUpdate({ title: v })}
+                      onCopy={() => doCopy("title", item.title)}
+                      copied={copied === "title"}
+                    />
+                    {tb ? (
+                      <BoundsBadge current={tLen} unit="chars" min={tb.min} max={tb.max} ok={tOk} />
+                    ) : null}
+                  </div>
                 ) : null}
                 {showDescription ? (
-                  <Field
-                    label="Description"
-                    value={item.description}
-                    rows={3}
-                    disabled={busy}
-                    onChange={(v) => onUpdate({ description: v })}
-                    onCopy={() => doCopy("description", item.description)}
-                    copied={copied === "description"}
-                  />
+                  <div>
+                    <Field
+                      label={db ? `Description (${dLen} chars)` : "Description"}
+                      value={item.description}
+                      rows={3}
+                      disabled={busy}
+                      onChange={(v) => onUpdate({ description: v })}
+                      onCopy={() => doCopy("description", item.description)}
+                      copied={copied === "description"}
+                    />
+                    {db ? (
+                      <BoundsBadge current={dLen} unit="chars" min={db.min} max={db.max} ok={dOk} />
+                    ) : null}
+                  </div>
                 ) : null}
                 {showKeywords ? (
-                  <Field
-                    label={`Keywords · ${item.keywords.length}`}
-                    value={item.keywords.join(", ")}
-                    rows={3}
-                    disabled={busy}
-                    onChange={(v) =>
-                      onUpdate({
-                        keywords: v.split(",").map((k) => k.trim()).filter(Boolean),
-                      })
-                    }
-                    onCopy={() => doCopy("keywords", item.keywords.join(", "))}
-                    copied={copied === "keywords"}
-                  />
+                  <div>
+                    <Field
+                      label={kb ? `Keywords (${kCount})` : `Keywords · ${kCount}`}
+                      value={item.keywords.join(", ")}
+                      rows={3}
+                      disabled={busy}
+                      onChange={(v) =>
+                        onUpdate({
+                          keywords: v.split(",").map((k) => k.trim()).filter(Boolean),
+                        })
+                      }
+                      onCopy={() => doCopy("keywords", item.keywords.join(", "))}
+                      copied={copied === "keywords"}
+                    />
+                    {kb ? (
+                      <BoundsBadge current={kCount} unit="keywords" min={kb.min} max={kb.max} ok={kOk} />
+                    ) : null}
+                  </div>
                 ) : null}
                 {showCategory ? (
                   <Field
@@ -306,7 +375,6 @@ export default function ResultCard({ item, platform, isAIGenerated, onUpdate, on
             ) : null}
           </div>
         </div>
-      )}
 
       {/* Footer actions */}
       <div className="flex flex-wrap items-center gap-2 px-4 sm:px-5 py-3 border-t border-slate-100 dark:border-slate-800">
@@ -360,6 +428,41 @@ function DreamstimeChecks({
           {c.msg}
         </p>
       ))}
+    </div>
+  );
+}
+
+function BoundsBadge({
+  current,
+  unit,
+  min,
+  max,
+  ok,
+}: {
+  current: number;
+  unit: string;
+  min: number;
+  max: number;
+  ok: boolean;
+}) {
+  const hasBounds = Number.isFinite(min) && Number.isFinite(max);
+  return (
+    <div className="flex flex-wrap items-center gap-2 mt-1.5 -mb-1 text-[10px]">
+      <span
+        className={`px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
+          ok
+            ? "bg-emerald-100 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300"
+            : "bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300"
+        }`}
+      >
+        {current} {unit}
+      </span>
+      {hasBounds && (
+        <span className="text-slate-500 dark:text-slate-400">
+          target {min}–{max}
+          {!ok && current < min && " · LLM under-delivered"}
+        </span>
+      )}
     </div>
   );
 }

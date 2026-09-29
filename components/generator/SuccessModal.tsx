@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { GenerationMode } from "@/lib/types";
 
 interface Props {
@@ -12,10 +13,22 @@ interface Props {
   onDownloadTxt?: () => void;
 }
 
+/** localStorage key for the "Don't show again" opt-out (CSV Tree parity). */
+export const HIDE_SUCCESS_MODAL_KEY = "mmg_hide_success_modal";
+
+export function isSuccessModalHidden(): boolean {
+  try {
+    return localStorage.getItem(HIDE_SUCCESS_MODAL_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Post-batch success popup (CSV Tree parity): confirms the batch finished
  * and offers the correct downloads - metadata exports CSV only,
- * prompt exports CSV + TXT.
+ * prompt exports CSV + TXT. Closes on Escape; "Don't show again"
+ * persists an opt-out so future full-batch runs skip the popup.
  */
 export default function SuccessModal({
   open,
@@ -26,13 +39,41 @@ export default function SuccessModal({
   onDownloadCsv,
   onDownloadTxt,
 }: Props) {
+  const [hideForever, setHideForever] = useState(false);
+
+  // Escape closes the dialog (CSV Tree's useEscapeKey).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   const title = mode === "img2prompt" ? "Prompts Generated!" : "Metadata Generated!";
+  const unit =
+    mode === "img2prompt"
+      ? count === 1
+        ? "prompt"
+        : "prompts"
+      : count === 1
+        ? "metadata set"
+        : "metadata sets";
   const subtitle =
-    count > 0
-      ? `Successfully generated ${count} ${count === 1 ? (mode === "img2prompt" ? "prompt" : "metadata") : mode === "img2prompt" ? "prompts" : "metadata items"}.`
-      : "Batch finished.";
+    count > 0 ? `Successfully generated ${count} ${unit}.` : "Batch finished.";
+
+  function close() {
+    if (hideForever) {
+      try {
+        localStorage.setItem(HIDE_SUCCESS_MODAL_KEY, "1");
+      } catch {}
+    }
+    setHideForever(false);
+    onClose();
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal>
@@ -65,23 +106,23 @@ export default function SuccessModal({
               <button
                 onClick={() => {
                   onDownloadCsv();
-                  onClose();
+                  close();
                 }}
                 disabled={count === 0}
                 className="rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition-opacity disabled:opacity-40"
               >
-                {mode === "img2prompt" ? "all-prompts.csv" : "Download CSV"}
+                {mode === "img2prompt" ? "Download Prompts CSV" : "Download Metadata CSV"}
               </button>
               {mode === "img2prompt" && onDownloadTxt ? (
                 <button
                   onClick={() => {
                     onDownloadTxt();
-                    onClose();
+                    close();
                   }}
                   disabled={count === 0}
                   className="rounded-lg border border-slate-300 dark:border-slate-600 px-5 py-2.5 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-40"
                 >
-                  all-prompts.txt
+                  Download Prompts TXT
                 </button>
               ) : null}
             </div>
@@ -90,12 +131,23 @@ export default function SuccessModal({
             </p>
           </div>
 
-          <button
-            onClick={onClose}
-            className="w-full rounded-lg py-2 text-sm font-medium text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
-          >
-            Close
-          </button>
+          <div className="flex items-center justify-between gap-3">
+            <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={hideForever}
+                onChange={(e) => setHideForever(e.target.checked)}
+                className="accent-[var(--brand)]"
+              />
+              Don&apos;t show again
+            </label>
+            <button
+              onClick={close}
+              className="px-5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>
