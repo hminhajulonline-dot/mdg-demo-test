@@ -13,15 +13,15 @@ import {
  * Performance notes:
  * - The raw row reads are wrapped in unstable_cache (60s + a tag) so a
  *   page navigation costs ZERO database queries once warm.
- * - Admin save routes call revalidateTag(...) after writing, so changes
- *   still appear immediately.
+ * - Admin save routes call revalidateTag(SITE_SETTINGS_TAG, "max") after
+ *   writing, so changes appear on the next request (stale-while-revalidate).
  * - The exported getters are wrapped in React cache(), so the root
  *   layout, header and footer share ONE read per request instead of
  *   each hitting the (possibly stale) cache separately.
  */
 
-const SITE_TAG = "site-settings";
-const GENERATOR_TAG = "generator-settings";
+export const SITE_SETTINGS_TAG = "site-settings";
+export const GENERATOR_SETTINGS_TAG = "generator-settings";
 
 interface SiteRow {
   site_name?: string;
@@ -72,7 +72,7 @@ const readSiteRow = unstable_cache(
     }
   },
   ["site-settings-row"],
-  { revalidate: 60, tags: [SITE_TAG] }
+  { revalidate: 60, tags: [SITE_SETTINGS_TAG] }
 );
 
 const readGeneratorRow = unstable_cache(
@@ -90,7 +90,7 @@ const readGeneratorRow = unstable_cache(
     }
   },
   ["generator-settings-row"],
-  { revalidate: 60, tags: [GENERATOR_TAG] }
+  { revalidate: 60, tags: [GENERATOR_SETTINGS_TAG] }
 );
 
 /**

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSiteSettings } from "@/lib/settings";
-import versionFile from "../../version.json";
+import versionFile from "../../../version.json";
 
 export const metadata = { title: "Admin Dashboard" };
 export const dynamic = "force-dynamic";

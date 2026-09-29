@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { getSiteSettings } from "@/lib/settings";
 import { assertLicenseIntegrity } from "@/lib/core/license";
 import RouteProgress from "@/components/branding/RouteProgress";
+import BackToTop from "@/components/ui/BackToTop";
 import "./globals.css";
 
 // Core integrity check - the site refuses to render when the required
@@ -83,6 +84,7 @@ export default async function RootLayout({
       <body className="min-h-full flex flex-col">
         <RouteProgress />
         {children}
+        <BackToTop />
       </body>
     </html>
   );

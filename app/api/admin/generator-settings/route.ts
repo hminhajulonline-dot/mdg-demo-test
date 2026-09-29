@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { requireAdminOrReturn } from "@/lib/api/guard";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getGeneratorSettings } from "@/lib/settings";
+import { getGeneratorSettings, GENERATOR_SETTINGS_TAG } from "@/lib/settings";
 
 function toInt(v: unknown): number | null {
   const n = Number(v);
@@ -100,6 +101,7 @@ export async function POST(request: Request) {
       updated_at: new Date().toISOString(),
     });
     if (error) throw error;
+    revalidateTag(GENERATOR_SETTINGS_TAG, "max");
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(

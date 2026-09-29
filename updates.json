@@ -2,6 +2,26 @@
   "$schema": "Maintained by Plickify. Newest entries first. Fork users see this file's contents on the /updates page and via the nav bell.",
   "updates": [
     {
+      "version": "2.11.0",
+      "date": "2026-09-29",
+      "type": "feature",
+      "title": "Login fixed, Login/Admin required screens, refreshed home",
+      "changes": [
+        "Email/password login actually works now - the proxy was intercepting POST /api/auth/login and redirecting the sign-in call to the login page, so every password attempt failed",
+        "No more bouncing back to /login after signing in: the ?next target is sanitized (never /login), and a signed-in non-admin sees an explicit Admin Required screen instead of a bare login form",
+        "New gate screens: signed-out visitors opening any tool page get a Login Required screen with a deep link back after sign-in; non-admin accounts get Admin Required everywhere",
+        "The proxy no longer force-redirects page requests: unauthenticated API calls return 401 JSON, session cookies rejected by the auth server are stripped, and the marketing home page stays public",
+        "Home/marketing page refreshed for the whole tool suite: a new Everything for stock contributors showcase with Login required locks when signed out, auth-aware CTAs and updated copy",
+        "Header stays clean when signed out - Tools, Community and the update bell are hidden and a Sign in button appears instead",
+        "Faster requests: warm sessions skip the Supabase getUser() roundtrip, admin row lookups are cached for 60 seconds, and admin settings/admin-list saves revalidate their caches immediately",
+        "New back-to-top button on every page"
+      ],
+      "bugfixes": [],
+      "migrationRequired": false,
+      "migrations": [],
+      "action": null
+    },
+    {
       "version": "2.10.0",
       "date": "2026-09-29",
       "type": "feature",

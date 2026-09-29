@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { requireAdminOrReturn } from "@/lib/api/guard";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getSiteSettings } from "@/lib/settings";
+import { getSiteSettings, SITE_SETTINGS_TAG } from "@/lib/settings";
 import { ALL_PROVIDER_IDS } from "@/lib/types";
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
@@ -118,6 +119,7 @@ export async function POST(request: Request) {
     });
     if (error) throw error;
 
+    revalidateTag(SITE_SETTINGS_TAG, "max");
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json(
